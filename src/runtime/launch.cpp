@@ -171,7 +171,7 @@ void migrate_runtime_data(const std::filesystem::path& code, const std::filesyst
         const auto status = entry.symlink_status();
         if (name == "app0" || name.starts_with(".convert-")) continue;
         // AnyPS5 reads these relative to the executable, rather than the working directory.
-        if (name == "anyps5-fonts" || name == "anyps5-entitlements.ini") continue;
+        if (name == "shader_cache" || name == "anyps5-fonts" || name == "anyps5-entitlements.ini") continue;
         if (!runtime_directory(name) && (name == "game.elf" || entry.path().extension() == ".elf" ||
             entry.path().extension() == ".prx" || name == "game.registry.json" ||
             (name.starts_with("game.") && name.ends_with(".prx.registry.json")))) continue;

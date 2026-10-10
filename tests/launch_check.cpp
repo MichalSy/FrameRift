@@ -97,6 +97,9 @@ save.write_text('Live save')
 memory = pathlib.Path('_sd_mem/u1/slot0.bin')
 memory.parent.mkdir(parents=True, exist_ok=True)
 memory.write_text('Memory save')
+shaders = pathlib.Path(args.executable).parent / 'shader_cache'
+shaders.mkdir(exist_ok=True)
+(shaders / 'runtime.bin').write_text('Executable-relative shader cache')
 print('original=' + args.game)
 print('code=' + args.executable)
 print('work=' + args.workdir)
@@ -150,8 +153,9 @@ if (root / 'fail-conversion').exists():
         const auto code = cache / "games/PPSA01234";
         const auto work = data / "saves/PPSA01234";
         const std::array legacy{std::filesystem::path("_sd/legacy.bin"), std::filesystem::path("_sd_mem/u2/slot0.bin"),
-            std::filesystem::path("shader_cache/shader.prx.guest.prx"), std::filesystem::path("controller.json")};
+            std::filesystem::path("controller.json")};
         for (const auto& path : legacy) write(code / path, "Legacy runtime data");
+        write(code / "shader_cache/shader.prx.guest.prx", "Native shader cache");
         write(code / "anyps5-fonts/font.ttf", "Executable-relative font");
         write(code / "anyps5-entitlements.ini", "Executable-relative entitlements");
         const auto prepared = framerift::prepare_game(game, settings, cache, data);
@@ -159,11 +163,13 @@ if (root / 'fail-conversion').exists():
             "Generated code and persistent working data must use separate directories with a stable game ID");
         for (const auto& path : legacy) {
             require(read(work / path) == "Legacy runtime data" && !std::filesystem::exists(code / path),
-                "Legacy saves, shader caches and configuration were not migrated to persistent storage");
+                "Legacy saves and configuration were not migrated to persistent storage");
         }
-        require(read(code / "anyps5-fonts/font.ttf") == "Executable-relative font" &&
+        require(read(code / "shader_cache/shader.prx.guest.prx") == "Native shader cache" &&
+            !std::filesystem::exists(work / "shader_cache") &&
+            read(code / "anyps5-fonts/font.ttf") == "Executable-relative font" &&
             read(code / "anyps5-entitlements.ini") == "Executable-relative entitlements",
-            "Executable-relative AnyPS5 support files must remain beside generated code");
+            "Executable-relative AnyPS5 shader caches and support files must remain beside generated code");
         require(prepared.log_path.parent_path().parent_path() == data / "logs/PPSA01234",
             "Session logs must stay beneath the shared data directory");
         require(read(prepared.conversion_log_path).find("converter stderr") != std::string::npos,
@@ -207,13 +213,19 @@ if (root / 'fail-conversion').exists():
         require(read(work / "_sd/live-save.bin") == "Live save" && read(work / "_sd_mem/u1/slot0.bin") == "Memory save" &&
             !std::filesystem::exists(code / "_sd") && !std::filesystem::exists(code / "_sd_mem"),
             "The game's relative save files must be written beneath the shared persistent data directory");
+        write(work / "shader_cache/shader.prx.guest.prx", "Previously migrated shader cache");
         const auto reused = framerift::prepare_game(game, settings, cache, data);
         require(reused.log_path != prepared.log_path && read(project / "conversion-count") == "converted\n",
             "A valid generated executable should be reused with a fresh session log");
+        require(read(code / "shader_cache/runtime.bin") == "Executable-relative shader cache" &&
+            read(code / "shader_cache/shader.prx.guest.prx") == "Native shader cache" &&
+            read(work / "shader_cache/shader.prx.guest.prx") == "Previously migrated shader cache",
+            "Repeated preparation must preserve both shader caches without migrating or conflicting");
         const std::array stale{code / "app0/Media/Plugins/stale.prx.guest.prx", code / "app0/Media/Modules/broken.prx",
             code / "app0/old.elf", code / "libStale.prx", code / "game.registry.json", code / "game.stale.prx.guest.prx.registry.json"};
         for (const auto& path : stale) write(path, "Old generated code");
-        const std::array preserved{work / "shader_cache/shader.prx.guest.prx", work / "_sd/save.bin",
+        const std::array preserved{code / "shader_cache/shader.prx.guest.prx", code / "shader_cache/runtime.bin",
+            work / "shader_cache/shader.prx.guest.prx", work / "_sd/save.bin",
             work / "_sd_mem/u1/slot1.bin", work / "devlog/output.log", work / "temp0/resource.bin", work / "assets.registry.json",
             data / "saves/PPSA01234/save.bin"};
         for (const auto& path : preserved) write(path, "Preserved data");

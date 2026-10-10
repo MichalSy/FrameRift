@@ -1,12 +1,22 @@
 # Architektur
 
-## Ausgangspunkt
+## Aktuelle Implementierung
+
+- `src/library` enthält Spielmetadaten, SQLite-Zugriff und SteamGridDB-Abfragen mit libcurl und JSON-GLib. Downloads laufen außerhalb der GTK-Callbacks.
+- SQLite-Schema 2 speichert SteamGridDB-ID, öffentliche Quellseite und lokale Pfade für Cover, Hero, Landscape und Logo. Demo-Einträge werden atomar ersetzt; Nutzereinträge bleiben erhalten. Die Migration entfernt die alten gebündelten Demo-Einträge.
+- `src/ui/app.cpp` enthält ausschließlich die GTK-Bibliothek mit Auswahl, Suche und Sortierung. Die UI liest ihre Spiele aus der Bibliotheksdomäne und zeigt vorhandene Cache-Daten auch offline an.
+- `assets/ui` wird als GResource eingebunden. Spielgrafiken werden aus der API geladen und außerhalb des Repositorys lokal gecacht.
+- `tests/library_check.cpp` prüft mit einem kleinen Programm Persistenz, Migration, Datenerhalt und ungültige Cache-Dateien.
+
+Der aktuelle Abschnitt beschränkt sich auf die Bibliothek. Demo-Metadaten und Spielzeiten stellen keine installierten Spiele oder gemessene Sitzungen dar. Der API-Key kommt aus `STEAMGRIDDB_API_KEY` und wird nicht gespeichert. Spielprozess, weitere Screens, Fenstereinbettung und Telemetrie sind geplant. Die folgenden Abschnitte beschreiben das Zielbild. Speicherort und Build-Befehle stehen in der [README](../README.md).
+
+## Geplanter Ausgangspunkt
 
 FrameRift ist ein separater Desktop-Launcher mit einer Spielebibliothek und einem Performance-Workspace. AnyPS5 erzeugt native Spielprogramme; die Runtime-Module werden im Spielprozess genutzt. Die UI, ihre Datenbank und Artwork-Abfragen sollen im FrameRift-Prozess liegen. Das Spiel behält einen eigenen Prozess, seine Grafik- und Eingabe-Runtime sowie eine klar definierte Lebensdauer.
 
 Diese Trennung erlaubt unabhängige Entwicklung und begrenzt die Anforderungen an AnyPS5. Ein Spiel soll weiter direkt startbar bleiben. Ein optionaler Adapter kann zusätzliche Telemetrie oder Kooperation bei der Fensterdarstellung anbieten. Ein kompletter GUI-Stack muss dafür nicht in die Spiel-Runtime eingebaut werden.
 
-Die hier beschriebene Architektur ist ein Vorschlag. Bestätigte Eigenschaften der vorhandenen Runtime und verifizierte Quellstellen stehen in [AnyPS5-Anbindung](anyps5-integration.md). Die kritische Fensterintegration wird in [Spielfensterintegration](game-window-integration.md) behandelt.
+Die weitere Architektur ist ein Vorschlag. Bestätigte Eigenschaften der vorhandenen Runtime und verifizierte Quellstellen stehen in [AnyPS5-Anbindung](anyps5-integration.md). Die kritische Fensterintegration wird in [Spielfensterintegration](game-window-integration.md) behandelt.
 
 ## Prozesse und Datenfluss
 
@@ -72,7 +82,7 @@ Die UI erhält kleine Vorschaubilder und erst bei Bedarf größere Hero-Bilder. 
 
 ## Lokale Speicherung
 
-Vorgeschlagen ist SQLite für strukturierte, eher selten geänderte Daten: Bibliothek, Startprofile, Artwork-Zuordnung, Sitzungsliste und Capture-Metadaten. Der Datenzugriff wird in einem klaren Modul gebündelt. Schemaänderungen erhalten Migrationen; ein Scan überschreibt keine manuelle Artwork-Auswahl.
+SQLite speichert bereits den Spielecache. Geplant sind weitere strukturierte, eher selten geänderte Daten: Startprofile, Artwork-Zuordnung, Sitzungsliste und Capture-Metadaten. Der Datenzugriff bleibt in seiner Domäne gebündelt. Spätere Schemaänderungen brauchen Migrationen; ein Scan soll keine manuelle Artwork-Auswahl überschreiben.
 
 Hochfrequente Messereignisse gehören in sequenzielle Capture-Dateien oder Blöcke mit separatem Index. Ein einzelner SQL-Schreibvorgang pro GPU-Ereignis auf dem UI-Thread wäre für diesen Zweck ungeeignet. Format, Rotation, Größenlimits und optionale Kompression werden erst nach einem kleinen Telemetrieprototyp festgelegt.
 
@@ -99,20 +109,18 @@ Ein minimaler Integrationsvertrag ist einer Vielzahl implizit geparster Logzeile
 
 Spätere Änderungen an AnyPS5 sollten klein und unabhängig prüfbar sein: optionaler Telemetrie-Export, Capability-Abfrage oder ein kooperativer Fensteradapter. FrameRift bleibt auch ohne diese Erweiterung als Bibliothek und Launcher sinnvoll nutzbar. Die gemeinsame Weiterentwicklung erfordert keine Zusage, dass AnyPS5-Maintainer eine konkrete Schnittstelle bereits akzeptiert haben.
 
-## Geplante Quellstruktur
+## Quellstruktur
 
-Eine mögliche spätere Aufteilung, noch ohne vorhandenen Anwendungsquellcode:
+Die aktuelle Struktur enthält nur die implementierten Bereiche:
 
 ```text
 src/
-  core/         Bibliothek, Startprofile, Sitzungszustände
-  runner/       Prozessstart und Log-Erfassung
-  telemetry/    Protokoll, Parser, Puffer, abgeleitete Messwerte
-  capture/      Dateiformat, Aufzeichnung, Export
-  artwork/      SteamGridDB, Cache und Asset-Auswahl
-  platform/     Windows-, X11- und weitere Host-Adapter
-  ui/           Bibliothek und Spiel-/Profiler-Ansicht
-tests/          Bedeutungsvolle Modell- und Protokolltests
+  library/      Spielmetadaten, SQLite-Cache und SteamGridDB
+  ui/           Native Spielebibliothek
+assets/
+  ui/           CSS und App-Zeichen
+  design/       Referenzentwürfe
+tests/          Kompakter Cache-Check
 ```
 
-Die Architektur soll nachvollziehbare Grenzen schaffen und kein umfangreiches Framework vorwegnehmen. Ein erfolgreicher Spike kann zeigen, dass ein Modul zunächst deutlich kleiner ausfallen darf.
+Weitere Domänen entstehen erst mit einem konkreten Bedarf. Verhalten und Daten bleiben zusammen; eine neue Datei braucht eine klare fachliche Zuordnung. Die Architektur soll nachvollziehbare Grenzen schaffen und kein umfangreiches Framework vorwegnehmen.

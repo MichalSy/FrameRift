@@ -2,7 +2,17 @@
 
 ## Zweck
 
-Die Planung ist bewusst ausführlich. Sie hält das gewünschte Produkt und die offenen technischen Fragen fest, bevor der Umfang auf einen ersten Release reduziert wird. Die Phasen sind keine Terminzusagen. Insbesondere die Spielfensterintegration und die Messschnittstelle müssen früh mit realen Programmen geprüft werden.
+Die Planung hält das gewünschte Produkt und die offenen technischen Fragen fest. Die Phasen sind keine Terminzusagen. Insbesondere die Spielfensterintegration und die Messschnittstelle müssen mit realen Programmen geprüft werden.
+
+## Aktueller Fokus: Spielebibliothek und Cache
+
+- Die native GTK4-Bibliothek liest ihre Einträge aus SQLite und bietet Hero-Auswahl, Suche, Sortierung und zuletzt gespielte Titel vor der Sammlung.
+- Demo-Einträge verwenden reale Katalogspiele mit Covern, Hero-Bildern und Logos aus der SteamGridDB-API. Spielzeiten dienen der UI-Vorschau.
+- Metadaten und Bilder werden lokal gecacht; die vorhandene Bibliothek bleibt offline nutzbar. Der API-Key kommt aus der Prozessumgebung und wird nicht im Cache gespeichert.
+- Dieser Abschnitt enthält ausschließlich die Bibliothek. Spielansicht, Profiler, Spielstart, Fenstereinbettung und Messdaten bleiben geplant.
+- Ein kleiner Cache-Check prüft Datenverhalten; die Oberfläche wird mit dem Referenzentwurf in einem virtuellen Desktop verglichen.
+
+Dieser Umfang wird hinsichtlich Darstellung, Suche, Sortierung, Auswahl und Cache-Erhalt geprüft. Die folgenden Integrationsversuche sind spätere Planung. Weitere Module und Screens entstehen erst mit einem konkreten Bedarf.
 
 ## Phase 0: Technische Machbarkeit
 
@@ -64,8 +74,8 @@ Mit dem stabilen Kern werden Pakete, CI und gezielte Tests aufgebaut. Prüfpunkt
 
 Die Startansicht und der Profiler müssen mit Tastatur gut bedienbar sein. Animationen sind reduzierbar. Aufzeichnung und Artwork haben konfigurierbare Grenzen. App-Icon, Ressourcen und Laufzeitbibliotheken werden in einem sauberen Windows- und Linux-Paket überprüft.
 
-## Was zuerst fokussiert werden sollte
+## Fokus nach UI und Cache
 
 Nach den Spikes sollte der erste konkrete Entwicklungsplan auf drei Ergebnisse reduziert werden: ein vorhandenes Spiel zuverlässig starten, die beiden Ansichten nativ abbilden und wenige korrekte Messwerte verständlich anzeigen. Eine gute kleine Frame-Analyse bringt mehr als viele Tabs mit unklarer Datenquelle.
 
-Diese Reduktion wird die ausführliche Ausgangsplanung ersetzen, sobald die praktischen Ergebnisse vorliegen. Bis dahin hält das Repository auch weitergehende Wünsche fest, damit sie bei der späteren Fokussierung bewusst eingeordnet werden können.
+Die weitergehenden Wünsche bleiben als geplante Erweiterungen erhalten. Praktische Ergebnisse bestimmen den Umfang der nächsten Implementierung.

@@ -1,0 +1,19 @@
+# FrameRift working rules
+
+- Read Atlas Start through Proxy MCP: `06b0f012-18a4-44a5-bfcc-64e29d4632d3`; search Atlas for existing project knowledge.
+- Re-read these bullets before implementing a new slice.
+- Keep it simple: implement the current need, with no scaffolding for future features.
+- Write code, identifiers, comments and UI text in English.
+- Keep data and behavior in their domain; reuse existing code before adding a file or abstraction.
+- Keep SQLite game/cache queries in `src/library`; keep GTK presentation in `src/ui`.
+- Focus the current slice on the game library; add other screens only when requested.
+- Keep cover sizes stable; use wider windows for additional grid columns.
+- Prefer the standard library and dependencies already in the native GTK stack.
+- Build the UI from database records; disable unavailable actions.
+- Keep provider, demo and implementation explanations out of the library UI.
+- Use real game artwork from the API; never create or generate game illustrations.
+- Preserve user cache records; replace demo records transactionally after successful API loading.
+- Keep API keys outside the repository, database, logs and command arguments.
+- Keep callbacks and resource ownership explicit; never let exceptions cross C callbacks.
+- Use a few meaningful checks for data behavior and a native UI smoke check, without a test framework.
+- Build and verify the changed behavior; keep documentation about the current state concise.

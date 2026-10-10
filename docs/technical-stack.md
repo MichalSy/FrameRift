@@ -2,31 +2,39 @@
 
 ## Status
 
-Dieses Dokument beschreibt vorgeschlagene Bausteine für FrameRift. Es gibt noch keine CMake-Konfiguration, keine festgeschriebenen Versionsnummern und keine installierte Abhängigkeitskette im Repository. Die eigentliche Toolkit-Abwägung steht in [Toolkit und Plattformen](toolkit-and-platforms.md). Die Entscheidung soll durch einen kleinen Windows-/Linux-Prototyp gestützt werden.
+Die Spielebibliothek ist mit C++20, CMake, GTK4, SQLite, libcurl und JSON-GLib implementiert. Build- und Startbefehle stehen in der [README](../README.md). Die Entwicklungsplattform ist Linux. Windows-Build und Auslieferung sind noch ungeprüft. Weitere Screens sind nicht Teil des aktuellen Abschnitts.
 
-## Arbeitsrichtung
+## Eingebaute Bausteine
+
+| Bereich | Baustein | Aufgabe |
+| --- | --- | --- |
+| Sprache | C++20 | Bibliotheksdomäne und native UI |
+| Build | CMake ab 3.20, Ninja, pkg-config | Programm, Cache-Check und Ressourcen bauen |
+| UI | GTK4 ab 4.12 | Native Widgets, Rendering und Eingabe über die C-API |
+| GTK-Umfeld | GLib/GObject/GIO | Anwendung, Signals, Ressourcen und Cache-Verzeichnis |
+| Lokaler Cache | SQLite3 | Spielmetadaten, SteamGridDB-Zuordnung und lokale Bildpfade |
+| HTTP | libcurl | SteamGridDB-API und Bild-Downloads außerhalb der UI-Callbacks |
+| JSON | JSON-GLib | SteamGridDB-Antworten mit vorhandenen GLib-Bausteinen lesen |
+| Ressourcen | `glib-compile-resources` | CSS und App-Zeichen als GResource einbetten |
+| Checks | CTest und kleines C++-Programm | Cache-Verhalten ohne Testframework prüfen |
+
+Es gibt einen nativen UI-Prozess und keine Browser-Laufzeit. Weitere Abhängigkeiten werden erst bei einem konkreten Bedarf hinzugefügt. Die Toolkit-Abwägung für spätere Plattformintegration steht in [Toolkit und Plattformen](toolkit-and-platforms.md).
+
+## Weitere vorgeschlagene Bausteine
 
 | Bereich | Vorschlag | Aufgabe und Einordnung |
 | --- | --- | --- |
-| Sprache | C++20 | Bibliotheksmodell, Prozessverwaltung, Datenverarbeitung und Plattformadapter; vorgeschlagener gemeinsamer Kern |
-| Build | CMake + Ninja | Abhängigkeiten und Targets beschreiben; schnelle lokale Builds; konkrete Compiler- und Paketierungswege noch prüfen |
-| UI | GTK4 | Native Widgets, Rendering und Eingabe; aktuelle Arbeitsrichtung |
 | Anwendungsbausteine | libadwaita | Adaptive Komponenten und Anwendungsstruktur; einzelne Komponenten passend zum eigenen Design auswählen |
-| GTK-Umfeld | GLib/GObject/GIO | Main Loop, Signals, Datei-/Prozess- und asynchrone APIs im GTK-Pfad |
 | UI-Alternative | Qt 6 + Qt Quick/QML | Native, individuell gestaltbare UI und plattformbezogene Fensterintegration; Alternative beim Toolkit-Gate |
-| HTTP | libcurl | SteamGridDB-API und Bild-Downloads im Hintergrund; vorgeschlagener, portabler HTTP-Baustein |
-| JSON | nlohmann/json | Metadaten, Konfiguration und frühe Telemetrie-Nachrichten; zunächst für moderate Datenmengen |
-| Lokaler Katalog | SQLite | Spiele, Startprofile, Artwork-Zuordnungen und Sitzungsindex |
 | Eigene Logs | spdlog, optional | Strukturierte Diagnose von FrameRift; Spielausgabe bleibt separat zuordenbar |
 | Capture-Kompression | zstd, optional | Größere Messaufzeichnungen in einem Worker komprimieren |
 | Entwicklungsprofiling | Tracy, optional | FrameRift-Overhead und gezielte Runtime-Instrumentierung untersuchen |
-| Tests | Catch2, möglicher Kandidat | Spätere Tests für Parser, Protokoll und Messberechnungen |
 
 GTK4/libadwaita und Qt sind alternative Frontend-Wege. Beide parallel in die erste Version einzubauen wäre ohne konkreten Nutzen unnötiger Aufwand. Ebenso sollte ein HTTP-Client ausgewählt werden, statt libcurl und weitere Clients für dieselbe Aufgabe vorzusehen.
 
 ## GTK4 und libadwaita im C++-Projekt
 
-GTK4 und libadwaita stellen C-APIs bereit. Eine C++-Anwendung kann diese nutzen, sollte aber Besitzverhältnisse von GObject-Referenzen, Callback-Lebensdauer und Thread-Zugriff in kleinen Wrappern verständlich halten. gtkmm ist eine mögliche C++-Bindung für GTK; es wird hier keine gleichermaßen etablierte libadwaita-C++-Bindung vorausgesetzt.
+GTK4 und libadwaita stellen C-APIs bereit. Die Vorschau verwendet GTK4 direkt aus C++. Besitzverhältnisse von GObject-Referenzen und Callback-Lebensdauer bleiben explizit; C++-Ausnahmen dürfen keine C-Callbacks verlassen. gtkmm und libadwaita sind nicht eingebaut und werden nur bei einem konkreten Nutzen erwogen.
 
 Die eigene Gestaltung soll nicht aus einer großen Menge undokumentierter Theme-Overrides bestehen. Wiederverwendbare Karten, Hero-Bereich, Toolbars, Zeitleiste und Frame-Details brauchen eine bewusst entworfene Komponentenbasis. libadwaita wird nach konkretem Nutzen ausgewählt und legt nicht automatisch jedes Detail der Oberfläche fest.
 
@@ -34,11 +42,11 @@ Windows-Unterstützung ist sowohl eine Backend- als auch eine Auslieferungsfrage
 
 ## Datenverarbeitung
 
-nlohmann/json eignet sich als verständliche Ausgangsbasis für Konfigurations- und Metadatenobjekte. Ein Hochfrequenzkanal muss seine tatsächliche Nachrichtenrate und Kosten separat prüfen. JSON kann im ersten Prototyp helfen; für große Ereignismengen kann später ein kompakteres, versioniertes Format sinnvoll werden. Ein Formatwechsel darf die Bedeutung der Messwerte nicht verändern.
+JSON-GLib liest derzeit die SteamGridDB-Antworten. Die Bibliothek verwendet damit vorhandene GLib-Bausteine und braucht keine zweite JSON-Bibliothek. Ein späterer Hochfrequenzkanal muss seine tatsächliche Nachrichtenrate und Kosten separat prüfen. Für große Ereignismengen kann ein kompakteres, versioniertes Format sinnvoll werden. Ein Formatwechsel darf die Bedeutung der Messwerte nicht verändern.
 
 SQLite speichert den Katalog und Indizes. Die primäre Messdatenablage wird unabhängig davon entworfen. Für Capture-Kompression ist zstd ein möglicher Baustein; Kompression und Dateischreiben bleiben außerhalb des Spielthreads und der UI-Zeichenroutine.
 
-libcurl bietet eine portable C-API für HTTP(S). Artwork-Abfragen brauchen Abbruch, Zeitlimits, Rate-Limit-Behandlung und wiederverwendbaren Cache. Die konkrete asynchrone Einbindung kann über einen Worker oder eine passende Event-Loop-Integration erfolgen. Netzwerkzugriffe dürfen weder Spielstart noch Offline-Nutzung voraussetzen.
+libcurl verarbeitet die HTTPS-Abfragen und Bild-Downloads. Metadaten und Bilder liegen anschließend im lokalen Cache. Der Zugangsschlüssel wird zur Laufzeit über `STEAMGRIDDB_API_KEY` übergeben; Cache und Diagnose enthalten ihn nicht. Netzwerkzugriffe dürfen die GTK-Oberfläche nicht blockieren. Weitere Anforderungen wie manuelle Zuordnung, Aktualisierung und Rate-Limit-Verhalten gehören in kleine, gezielte Erweiterungen.
 
 ## SDL2, Vulkan und Bildformate
 
@@ -56,11 +64,11 @@ FrameRifts Benutzeroberfläche braucht auch ohne eine umfassende Tracy-Integrati
 
 ## Versionen und Auslieferung
 
-Vor dem ersten implementierten Prototyp werden konkrete unterstützte Versionen festgelegt. Dann sollen reproduzierbare Build-Definitionen und CI für Windows und Linux entstehen. Linux/X11 und Linux/Wayland werden gesondert geprüft, weil erfolgreiche Paketinstallation keine identischen Fähigkeiten bei der Spielfensterintegration bedeutet.
+Die Mindestversionen der eingebauten Bausteine stehen oben und werden von CMake geprüft. CI und Endnutzerpakete für Windows und Linux sind noch geplant. Linux/X11 und Linux/Wayland brauchen getrennte Integrationsprüfungen, weil erfolgreiche Paketinstallation keine identischen Fähigkeiten bei der Spielfensterintegration bedeutet.
 
 Ein Packaging-Spike entscheidet zwischen passenden Werkzeugen für den GTK- oder Qt-Pfad. MSYS2, gvsbuild, Paketmanager oder andere Dependency-Strategien sind zu bewerten; es gibt derzeit keine festgelegte Kombination mit einem bestimmten Windows-Compiler. Ein Endnutzerpaket sollte seine nötigen Laufzeitbibliotheken nachvollziehbar mitbringen.
 
-Ein vollständiges Lizenzinventar wird mit der tatsächlich gewählten Abhängigkeitsliste erstellt. Besonders ein Toolkit-Wechsel muss die jeweiligen Auslieferungsbedingungen berücksichtigen. Eine pauschale Projektlizenz ist in dieser Planungsphase noch nicht beschlossen.
+Ein vollständiges Lizenzinventar wird mit der Auslieferung erstellt. Besonders ein Toolkit-Wechsel muss die jeweiligen Auslieferungsbedingungen berücksichtigen. Die Projektlizenz ist noch nicht beschlossen.
 
 ## Primärquellen
 
@@ -70,10 +78,9 @@ Ein vollständiges Lizenzinventar wird mit der tatsächlich gewählten Abhängig
 - [Qt Quick](https://doc.qt.io/qt-6/qtquick-index.html)
 - [CMake](https://cmake.org/cmake/help/latest/guide/tutorial/index.html) und [Ninja](https://ninja-build.org/)
 - [libcurl](https://curl.se/libcurl/)
-- [nlohmann/json](https://nlohmann.github.io/json/) und [CMake-Einbindung](https://nlohmann.github.io/json/integration/cmake/)
+- [JSON-GLib](https://gnome.pages.gitlab.gnome.org/json-glib/)
 - [SQLite als Anwendungsformat](https://www.sqlite.org/appfileformat.html)
 - [spdlog](https://github.com/gabime/spdlog)
 - [zstd](https://github.com/facebook/zstd)
 - [Tracy](https://github.com/wolfpld/tracy)
 - [libwebp](https://github.com/webmproject/libwebp)
-- [Catch2](https://github.com/catchorg/Catch2)

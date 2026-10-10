@@ -134,12 +134,15 @@ std::string unique_id() {
 }
 
 Process spawn_process(const std::vector<std::string>& command, const std::filesystem::path& directory,
-    const std::filesystem::path& log_path = {}) {
+    const std::filesystem::path& log_path = {}, const std::filesystem::path& memory_log_path = {}) {
     if (command.empty()) throw std::runtime_error("The launch command is empty");
     const std::unique_ptr<GSubprocessLauncher, decltype(&g_object_unref)> launcher(
         g_subprocess_launcher_new(static_cast<GSubprocessFlags>(G_SUBPROCESS_FLAGS_STDERR_MERGE |
             (log_path.empty() ? G_SUBPROCESS_FLAGS_STDOUT_PIPE : G_SUBPROCESS_FLAGS_NONE))), g_object_unref);
     g_subprocess_launcher_unsetenv(launcher.get(), "STEAMGRIDDB_API_KEY");
+    if (!memory_log_path.empty()) {
+        g_subprocess_launcher_setenv(launcher.get(), "ANYPS5_MEMORY_LOG", memory_log_path.string().c_str(), true);
+    }
     g_subprocess_launcher_set_cwd(launcher.get(), directory.string().c_str());
     if (!log_path.empty()) g_subprocess_launcher_set_stdout_file_path(launcher.get(), log_path.string().c_str());
     std::vector<const gchar*> arguments;
@@ -252,6 +255,10 @@ PreparedGame prepare_game(const Game& game, const LaunchSettings& settings,
     const auto anyps5 = existing_directory(settings.anyps5_directory, "AnyPS5");
     const auto script = anyps5 / "tools/run_game.py";
     if (!std::filesystem::is_regular_file(script)) throw std::runtime_error("AnyPS5 has no tools/run_game.py launcher");
+    const auto guard = anyps5 / "tools/run_with_memory_guard.py";
+    if (!std::filesystem::is_regular_file(guard) || !std::ifstream(guard)) {
+        throw std::runtime_error("AnyPS5 has no readable tools/run_with_memory_guard.py; unguarded game launch is disabled");
+    }
     const auto runtime = existing_directory(settings.runtime_directory, "Runtime");
     if (runtime.string().find_first_of(":$") != std::string::npos) {
         throw std::runtime_error("Runtime paths cannot contain ':' or '$'");
@@ -319,14 +326,15 @@ PreparedGame prepare_game(const Game& game, const LaunchSettings& settings,
     } else {
         std::ofstream(prepared.conversion_log_path) << "Using cached native executable\n";
     }
-    prepared.command = {python.get(), script.string(), "--runtime", runtime.string(), "--game", original.string(),
+    prepared.command = {python.get(), "-B", guard.string(), "--", python.get(), "-B", script.string(),
+        "--runtime", runtime.string(), "--game", original.string(),
         "--executable", executable.string(), "--workdir", prepared.working_directory.string()};
     return prepared;
 }
 
 void launch_game(const PreparedGame& game, GameOutput output, GameFinished finished) {
     auto log = std::make_unique<GameLog>(game.log_path, std::move(output), std::move(finished));
-    auto process = spawn_process(game.command, game.working_directory);
+    auto process = spawn_process(game.command, game.working_directory, {}, game.log_path.parent_path() / "memory.jsonl");
     auto* capture = log.release();
     capture->start(process.release());
 }

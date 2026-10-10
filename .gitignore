@@ -1,0 +1,29 @@
+# Future local build output
+/build/
+/build-*/
+/out/
+/dist/
+CMakeUserPresets.json
+compile_commands.json
+
+# Local settings and credentials
+.env
+.env.*
+!.env.example
+/config.local.json
+/secrets/
+
+# Runtime data belongs outside the repository
+/runtime-data/
+/cache/
+/captures/
+/logs/
+*.sqlite-wal
+*.sqlite-shm
+
+# Editor and operating-system files
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db

@@ -1,15 +1,24 @@
-# Beiträge zu FrameRift
+<!--
+SPDX-License-Identifier: AGPL-3.0-or-later
+Copyright (C) 2026 Michal Sytko and FrameRift contributors
+Original project: https://github.com/MichalSy/FrameRift
+Additional attribution terms: see NOTICE in the repository root.
+-->
 
-FrameRift entwickelt zuerst ausschließlich die native GTK4-Spielebibliothek und ihren SQLite-Cache. Demo-Einträge verwenden echte Katalogspiele und lokal gecachte SteamGridDB-Bilder. Build, Start und isolierte Cache-Nutzung stehen in der [README](README.md). Weitere Screens und Integrationen bleiben geplant.
+# Contributing to FrameRift
 
-Lies vor jeder Implementierung [AGENTS.md](AGENTS.md). Halte Änderungen klein, schreibe Code und UI-Texte auf Englisch und verwende vorhandene Domänen: Datenzugriff in `src/library`, GTK-Oberfläche in `src/ui`. Prüfe neue Dateien auf ihre fachliche Zuordnung und vermeide zusätzliche Abstraktionen ohne aktuellen Bedarf.
+Published `main` contains the native GTK4 library, SQLite cache and SteamGridDB sample artwork. Folder scanning, Linux launch and rebuild, artwork settings and the Profiler console are development work. See the [README](README.md) for build instructions and status, and the [roadmap](docs/roadmap.md) for planned extensions.
 
-Im aktuellen Abschnitt sind Darstellung, Suche, Sortierung, Auswahl und Cache-Erhalt relevant. Spätere technische Versuche zu Spielstart, Fensterintegration, Eingabefokus und Telemetrie sollten Plattform, Display-Backend, Compiler, Toolkit und den verwendeten AnyPS5-Quellenstand nennen. Beschreibe das beobachtete Verhalten und die Grenzen des Versuchs. Eine funktionierende Windows- oder X11-Lösung ist noch kein Nachweis für native Wayland-Fenstereinbettung.
+Read [AGENTS.md](AGENTS.md) before implementing changes. Keep changes small, write code, comments and UI text in English, and use the existing domains: database access in `src/library`, GTK presentation in `src/ui`, and conversion and process launching in `src/runtime`. Add files and abstractions only when the current need justifies them.
 
-Bei Dokumentationsänderungen bitte zwischen vorhandenem Upstream-Verhalten, FrameRift-Plan und ungeprüfter Annahme unterscheiden. Quellverweise auf AnyPS5 sollten einen Commit verwenden, wenn ein konkretes Verhalten beschrieben wird. Für Bibliotheken sind offizielle Dokumentationen und Projektquellen geeignete Belege.
+Prioritize library presentation, search, sorting, selection and cache preservation. Technical experiments with launch, window integration, input focus or telemetry should identify the platform, display backend, compiler, toolkit and AnyPS5 source revision. Describe observed behavior and limitations. A working Windows or X11 experiment does not establish native Wayland embedding support.
 
-Die UI-Richtung steht in [Design und Bedienung](docs/design.md). Eine Änderung an der Technik sollte die Produktziele weiter unterstützen: native Windows-/Linux-Anwendung, getrennte Bibliotheks- und Spielansicht, unmittelbare Bedienung und korrekt interpretierte Messwerte.
+Documentation must distinguish published behavior, development work, plans and unverified assumptions. Pin AnyPS5 references to a commit when describing specific behavior. Use official documentation and project sources as evidence for dependencies.
 
-Spieldateien, private API-Schlüssel, Nutzerkonfigurationen, umfangreiche Capture-Daten und unzugeordnete Artwork-Sammlungen gehören nicht in Beiträge. Spielgrafiken stammen aus der API; eigene oder generierte Ersatzillustrationen sind nicht vorgesehen. Für Bildmaterial bitte Fundstelle, Urheberangaben soweit verfügbar und Rechtekontext dokumentieren. Der SteamGridDB-Schlüssel wird über `STEAMGRIDDB_API_KEY` übergeben und gehört weder in Kommandoargumente noch in Datenbank oder Logs. FrameRift code and documentation use the [MIT license](LICENSE); contributions must be compatible with it.
+The UI direction is described in [Design](docs/design.md). Technical changes should support the product goals: a native Windows/Linux application, a library and a separate game/profiler workspace, direct controls and accurately interpreted measurements.
 
-Der aktuelle Umfang steht in der [Roadmap](docs/roadmap.md). Führe keine umfangreiche Abhängigkeitskette allein für einen UI-Effekt ein. Nutze wenige aussagekräftige Datenchecks und einen nativen UI-Smoke-Check; für die Vorschau ist kein Testframework erforderlich. Bewahre vorhandene Cache-Daten und deaktiviere unverfügbare Aktionen. Erklärungen zu Demo-Daten und Artwork-Anbietern gehören nicht in die Bibliotheksoberfläche.
+Keep game files, private API keys, user settings, large captures and unattributed artwork collections out of contributions. Game artwork comes from the API; generated replacement illustrations are not used. Document image sources, available author information and rights. API keys belong outside command arguments, the database and logs. Development artwork settings use the desktop keyring; `STEAMGRIDDB_API_KEY` is an environment override.
+
+Original FrameRift code and documentation use [AGPL-3.0-or-later](LICENSE), including the attribution term in [NOTICE](NOTICE). Contributions must be compatible with these terms. Preserve the FrameRift credit and original project URL. Third-party artwork and dependencies retain their own licenses.
+
+Use a few meaningful data checks and a native UI smoke check without a test framework. Preserve existing cache data and disable unavailable actions. Provider, demo and implementation explanations belong in documentation rather than the library UI. Avoid adding a large dependency chain for a visual effect.

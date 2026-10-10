@@ -1,180 +1,187 @@
-# Integration des Spielprozesses und seines Fensters
+<!--
+SPDX-License-Identifier: AGPL-3.0-or-later
+Copyright (C) 2026 Michal Sytko and FrameRift contributors
+Original project: https://github.com/MichalSy/FrameRift
+Additional attribution terms: see NOTICE in the repository root.
+-->
 
-[Zur Projektübersicht](../README.md) · [Toolkit und Plattformen](toolkit-and-platforms.md) · [Artwork](artwork.md)
+# Game process and window integration
 
-## Ziel und Status
+[Project overview](../README.md) · [Toolkit and platforms](toolkit-and-platforms.md) · [Artwork](artwork.md)
 
-FrameRift soll ein laufendes Spiel aus einem **separaten Prozess** in einer eigenen Profiler-Ansicht darstellen können. Die große Spielfläche, die Frame-Analyse rechts und die Messansicht unten sind das gewünschte Layout. Die eingebettete Darstellung ist ein geplantes Ziel mit plattformabhängigen Prüfungen; sie ist noch keine nachgewiesene Produkteigenschaft.
+## Goal and status
 
-Die Architektur soll außerdem eine externe Spielansicht unterstützen. Damit bleiben Start, Prozessverwaltung und Profiler bedienbar, auch wenn ein bestimmtes System oder ein Spiel-Build kein verlässliches Einbetten erlaubt.
+FrameRift is intended to display a running game from a **separate process** in its Profiler view. The desired layout has a large game area, frame analysis on the right and measurements below. Embedded rendering is planned and requires platform-specific validation; it is not a proven product feature.
 
-## Grundmodell und Besitz
+The committed application on `main` provides the library and artwork cache. Process launching and a Profiler output view are development work. The architecture must also support an external game window so that launching, process management and profiling remain usable when a system or game build cannot embed reliably.
+
+## Basic model and ownership
 
 ```mermaid
 flowchart LR
-    UI[FrameRift UI-Prozess] <-->|Versioniertes IPC: Status, Befehle, Messdaten| Adapter[Adapter im Spielprozess]
-    Adapter --> SDL[SDL-Fenster und Eventloop]
-    SDL --> GPU[Spielrenderer / Vulkan]
-    Adapter -->|Nur geeignete Plattformdaten| Host[Plattformadapter in FrameRift]
-    Host --> View[Profiler-Spielfläche oder externes Fenster]
+    UI[FrameRift UI process] <-->|Versioned IPC: status, commands, measurements| Adapter[Adapter in game process]
+    Adapter --> SDL[SDL window and event loop]
+    SDL --> GPU[Game renderer / Vulkan]
+    Adapter -->|Suitable platform data only| Host[Platform adapter in FrameRift]
+    Host --> View[Profiler game area or external window]
 ```
 
-Der Spielprozess besitzt sein SDL-Fenster, seine Eingabe-Verarbeitung und seine Grafikressourcen. FrameRift besitzt die Bibliothek, den Prozess-Controller, Profiler-Datenmodelle und die UI-Flächen. Ein Integrationsadapter vermittelt zwischen beiden, ohne die Spielausführung in den UI-Prozess zu verlagern.
+The game process owns its SDL window, input handling and graphics resources. FrameRift owns the library, process controller, Profiler data models and UI areas. An integration adapter connects them without moving game execution into the UI process.
 
-**Ein `SDL_Window*` darf niemals über die Prozessgrenze übergeben und im anderen Prozess benutzt werden.** Der Zeiger verweist auf Speicher des erzeugenden Prozesses. Dasselbe gilt für `Display*`, `wl_display*`, `wl_surface*` und beliebige Vulkan-Objektzeiger. Auch eine numerische Serialisierung einer Adresse macht daraus kein gemeinsam nutzbares Objekt.
+**Never pass an `SDL_Window*` across the process boundary and use it in the other process.** It points to memory in the process that created it. The same applies to `Display*`, `wl_display*`, `wl_surface*` and Vulkan object pointers. Serializing an address as a number does not make the object shareable.
 
-Ein Windows-`HWND` oder eine X11-`Window`-ID ist dagegen ein Betriebssystem-/Serverbezug, der unter den jeweiligen Plattformbedingungen zur Identifikation dienen kann. Diese Werte dürfen nur zusammen mit Prozessidentität, Backend und Lebenszeitgeneration ausgewertet werden. GPU-Ressourcen verlangen ausdrücklich exportierbare Handles und einen eigenen Synchronisationsvertrag.
+A Windows `HWND` or X11 `Window` ID is an operating-system or server reference that can identify a window under the relevant platform conditions. These values must be checked together with process identity, backend and lifetime generation. GPU resources require explicitly exportable handles and a separate synchronization contract.
 
-## Gegenwärtiger AnyPS5-Ausgangspunkt
+## AnyPS5 baseline
 
-Die untersuchte Upstream-Fassung ist [AnyPS5, Commit 197ffac97203d715a258a28b432fa2eedbf8be6f](https://github.com/boykopovar/AnyPS5/tree/197ffac97203d715a258a28b432fa2eedbf8be6f). Ihr [CMakeLists.txt](https://github.com/boykopovar/AnyPS5/blob/197ffac97203d715a258a28b432fa2eedbf8be6f/CMakeLists.txt#L68) konfiguriert SDL aus `3rdparty/SDL2` mit `SDL_SHARED=OFF`, `SDL_STATIC=ON`, `SDL_X11=ON`, `SDL_WAYLAND=OFF` und Vulkan-Unterstützung.
+The inspected upstream version is [AnyPS5, commit 197ffac97203d715a258a28b432fa2eedbf8be6f](https://github.com/boykopovar/AnyPS5/tree/197ffac97203d715a258a28b432fa2eedbf8be6f). Its [CMakeLists.txt](https://github.com/boykopovar/AnyPS5/blob/197ffac97203d715a258a28b432fa2eedbf8be6f/CMakeLists.txt#L68) configures SDL from `3rdparty/SDL2` with `SDL_SHARED=OFF`, `SDL_STATIC=ON`, `SDL_X11=ON`, `SDL_WAYLAND=OFF` and Vulkan support.
 
-Die [Fenstererzeugung in DisplayWindow.cpp](https://github.com/boykopovar/AnyPS5/blob/197ffac97203d715a258a28b432fa2eedbf8be6f/core/libs/prx/libSceVideoOut/src/DisplayWindow.cpp#L63) verwendet die SDL2-Signatur von `SDL_CreateWindow()` und später `SDL_GetWindowWMInfo()`. Das bestätigt den SDL2-Ausgangspunkt zusätzlich zum Verzeichnisnamen.
+[Window creation in DisplayWindow.cpp](https://github.com/boykopovar/AnyPS5/blob/197ffac97203d715a258a28b432fa2eedbf8be6f/core/libs/prx/libSceVideoOut/src/DisplayWindow.cpp#L63) uses the SDL2 signature of `SDL_CreateWindow()` and later calls `SDL_GetWindowWMInfo()`. This confirms the SDL2 baseline beyond the directory name.
 
-Das ist eine Quellcodebeobachtung für diesen Commit. Ein fertiges Release-Artefakt, eine andere Konfiguration oder ein zukünftiger Upstream kann abweichen. Für eine spätere Integration ist der konkrete ausgelieferte Build maßgeblich.
+These are source observations for that commit. Release artifacts, other configurations and future upstream versions may differ. Integration must be assessed against the actual distributed build. FrameRift's launcher requires the [modified AnyPS5 fork](https://github.com/MichalSy/AnyPS5); the upstream references here document the window-system baseline.
 
-Für diesen SDL2-Ausgangspunkt stellt `SDL_GetWindowWMInfo()` backendabhängige Informationen bereit. SDL2 kennt zudem `SDL_CreateWindowFrom()` zum Umhüllen eines vorhandenen nativen Fensters; diese API ist kein Mechanismus, einen `SDL_Window*` zwischen Prozessen zu teilen. [SDL2 GetWindowWMInfo](https://wiki.libsdl.org/SDL2/SDL_GetWindowWMInfo), [SDL2 CreateWindowFrom](https://wiki.libsdl.org/SDL2/SDL_CreateWindowFrom)
+For SDL2, `SDL_GetWindowWMInfo()` provides backend-specific information. `SDL_CreateWindowFrom()` wraps an existing native window; it does not share an `SDL_Window*` between processes. [SDL2 GetWindowWMInfo](https://wiki.libsdl.org/SDL2/SDL_GetWindowWMInfo), [SDL2 CreateWindowFrom](https://wiki.libsdl.org/SDL2/SDL_CreateWindowFrom)
 
-SDL3 ist eine mögliche spätere Zielvariante. Dort werden native Angaben über `SDL_GetWindowProperties()` abgefragt. SDL2- und SDL3-Adapter müssen getrennte ABI-/API-Verträge besitzen; eine SDL3-Dokumentation bestätigt keine SDL2-Funktion. [SDL3 GetWindowProperties](https://wiki.libsdl.org/SDL3/SDL_GetWindowProperties)
+SDL3 is a possible future target. It exposes native information through `SDL_GetWindowProperties()`. SDL2 and SDL3 adapters need separate ABI/API contracts; SDL3 documentation does not establish an SDL2 function. [SDL3 GetWindowProperties](https://wiki.libsdl.org/SDL3/SDL_GetWindowProperties)
 
-## Bevorzugte Integrationsrichtung: kooperativer Adapter
+## Preferred direction: cooperative adapter
 
-Ein kleiner, gezielt integrierter Adapter im Spielprozess ist die vorgeschlagene bevorzugte Richtung. Er kann an der tatsächlichen Fenstererzeugung mitwirken, passende native Daten liefern und Ereignisse über ein versioniertes IPC-Protokoll melden. Er ist nachvollziehbarer als das Erraten eines Fensters anhand eines Titels.
+A small adapter deliberately integrated into the game process is the preferred proposal. It can participate in actual window creation, provide suitable native data and report events over versioned IPC. This is easier to verify than identifying a window by its title.
 
-Der Adapter soll konzeptionell:
+The adapter should:
 
-1. Einen von FrameRift gestarteten Prozess anhand eines Sitzungsbezugs erkennen.
-2. Die tatsächliche SDL-Fenstererzeugung melden und das verwendete Video-Backend angeben.
-3. Die unterstützten Fähigkeiten melden, etwa externe Darstellung, Windows-Handle, X11-ID oder optionalen Bildtransport.
-4. Größen-, Fokus-, Vollbild- und Beendigungsereignisse bestätigen.
-5. Sich nach einem Abbruch ohne unendliches Warten oder übrig gebliebene UI-Ressourcen beenden.
+1. Identify a process launched by FrameRift through a session reference.
+2. Report actual SDL window creation and the video backend in use.
+3. Report capabilities such as external rendering, a Windows handle, an X11 ID or optional image transport.
+4. Confirm size, focus, fullscreen and termination events.
+5. Shut down after cancellation without waiting indefinitely or leaving UI resources behind.
 
-Das ist ein Protokollentwurf, kein bereits vorhandener Adapter. Die Bibliothek muss auch mit einem unmodifizierten Spielprozess funktionieren, dann zunächst über das externe Fenster.
+This is a protocol proposal, not an existing adapter. Games without the optional window adapter must remain usable through their external window; this does not remove the launcher's requirement for the modified AnyPS5 fork.
 
-## Hook-Richtung als geprüfte Alternative
+## Hooks as an alternative to evaluate
 
-Ein Hook an `SDL_CreateWindow` kann die Fenstererzeugung beobachten oder in einem kontrollierten Adapter koordinieren. **Dieser Hook läuft im Spielprozess.** FrameRift empfängt daraus Plattformdaten und Status über IPC. Das Frontend ruft nicht nachträglich eine fremde SDL-Instanz über deren Speicheradresse auf.
+A hook on `SDL_CreateWindow` can observe window creation or coordinate it through a controlled adapter. **The hook runs in the game process.** FrameRift receives platform data and status through IPC. The frontend does not call another process's SDL instance through its memory address.
 
-Weitere Eintrittspunkte wie spätere Fensterneuerzeugung, Fensterzerstörung und backendabhängige Resize-/Fullscreen-Abläufe müssen mit erfasst werden. Ein einmal erfolgreich abgefangenes `SDL_CreateWindow` beweist noch keinen vollständigen Lebenszyklus. SDL weist insbesondere auf die Kopplung von Fenstern und Grafik-Backends hin. [SDL2 CreateWindow](https://wiki.libsdl.org/SDL2/SDL_CreateWindow)
+Later window recreation, destruction and backend-specific resize/fullscreen operations must also be covered. Intercepting one `SDL_CreateWindow` call does not prove a complete lifecycle. SDL specifically documents the coupling between windows and graphics backends. [SDL2 CreateWindow](https://wiki.libsdl.org/SDL2/SDL_CreateWindow)
 
-### Linux: Interposition nur unter überprüfbaren Bedingungen
+### Linux: interposition requires verified conditions
 
-`LD_PRELOAD` ist **kein zugesagter universeller SDL-Hook**. Vor diesem Weg müssen am konkreten Prozessartefakt überprüft werden:
+`LD_PRELOAD` is **not a guaranteed universal SDL hook**. Check the actual process artifact first:
 
-- Ist SDL dynamisch geladen oder in ein ausführbares Programm bzw. eine andere Bibliothek integriert?
-- Erfolgt der betreffende Aufruf über eine interponierbare dynamische Symbolauflösung?
-- Sind Sichtbarkeit, Symbolversionen, Relokationen und Aufrufstellen für den Adapter geeignet?
-- Haben Linkeroptionen, Optimierungen, lokale Bindung oder LTO die relevante Grenze verändert?
-- Stimmt die ABI des Hooks exakt mit der benutzten SDL-Version und Architektur überein?
-- Wird die Adapterbibliothek für diesen kontrollierten Start tatsächlich geladen, und erreicht ein Nachweistest den Hook?
+- Is SDL loaded dynamically or incorporated into an executable or another library?
+- Does the call use dynamic symbol resolution that allows interposition?
+- Are visibility, symbol versions, relocations and call sites suitable for the adapter?
+- Have linker options, optimization, local binding or LTO changed the relevant boundary?
+- Does the hook ABI match the exact SDL version and architecture?
+- Is the adapter library actually loaded for this controlled launch, and does a proof test reach the hook?
 
-Die GNU-Linker-Dokumentation zeigt beispielsweise, dass `-Bsymbolic` und `-Bsymbolic-functions` Referenzen innerhalb eines Shared Objects an dessen eigene Definitionen binden können. Das ist ein konkreter Grund, nicht vom bloßen Vorhandensein eines Symbolnamens auf Hookbarkeit zu schließen. [GNU ld: Symbolbindung](https://sourceware.org/binutils/docs/ld/Options.html)
+GNU linker documentation explains that `-Bsymbolic` and `-Bsymbolic-functions` can bind references within a shared object to its own definitions. A symbol name alone therefore does not prove that a call can be hooked. [GNU ld: symbol binding](https://sourceware.org/binutils/docs/ld/Options.html)
 
-Das statisch eingebundene SDL im untersuchten AnyPS5-Quellstand spricht gegen die pauschale Annahme, ein Preload-Wrapper für eine externe SDL-Bibliothek fange alle Aufrufe ab. **Statisches SDL bedeutet aber nicht, dass überhaupt kein Hook oder Adapter möglich ist.** Ein bewusst eingebauter Adapter, ein linkerbasierter Buildweg oder eine getrennt bewertete native API-Grenze können andere Möglichkeiten eröffnen. Ein niedrigerer Hook an der Fensterplattform verändert jedoch die Reichweite und braucht seine eigene Analyse. Binärpatching und Injektion sind keine beschlossene Basisarchitektur.
+Statically linked SDL in the inspected AnyPS5 source challenges the assumption that a preload wrapper for an external SDL library catches all calls. **Static SDL does not rule out every hook or adapter.** A built-in adapter, a linker-based build approach or a separately assessed native API boundary may offer alternatives. A lower-level window-system hook changes the scope and needs its own analysis. Binary patching and injection are not the agreed base architecture.
 
-### Windows: keine pauschale DLL-Annahme
+### Windows: do not assume a DLL boundary
 
-Auch auf Windows entscheidet der konkrete Build, ob eine importierte SDL-DLL-Funktion, ein kooperativer Adapter oder eine andere kontrollierte Grenze verfügbar ist. Statische SDL-Nutzung liefert keinen automatischen IAT-Eintrag für `SDL_CreateWindow`. Der erste Prototyp soll daher den kooperativen Prozess testen und seine Fensterdaten explizit melden, bevor ein unmodifizierter Fremdprozess mit Hooks unterstützt wird.
+The actual build determines whether an imported SDL DLL function, a cooperative adapter or another controlled boundary is available. Static SDL does not automatically provide an IAT entry for `SDL_CreateWindow`. The first prototype should therefore test a cooperative process that explicitly reports its window data before supporting hooks in a process without that adapter.
 
-## Plattformmatrix
+## Platform matrix
 
-| Umgebung | Nutzbarer Bezug | Vorgeschlagener Integrationsweg | Status |
+| Environment | Usable reference | Proposed integration | Status |
 |---|---|---|---|
-| Windows / Win32 | `HWND` und bestätigte Prozess-/Fensteridentität | Plattformadapter; Qt-Fremdfenstercontainer als Kandidat | Nachzuweisen |
-| Linux / X11 | X11-`Window`-ID auf demselben X-Server | Reparent/Container mit Fokus- und Geometrievertrag | Nachzuweisen |
-| Linux / natives Wayland | Keine universell übertragbare Fremdfenster-ID zum Reparenten | Kooperativer Bildtransport oder externe Darstellung | Eigenes Entscheidungsgate |
-| Linux / XWayland | X11-Ressource innerhalb XWayland | Nur wenn auch der Hostweg tatsächlich kompatibel ist | Gesondert testen |
-| Alle Zielplattformen | Prozess und IPC | Externes Spielwindow plus Profiler | Vorgesehener Fallback |
+| Windows / Win32 | `HWND` and confirmed process/window identity | Platform adapter; Qt foreign-window container as a candidate | Requires validation |
+| Linux / X11 | X11 `Window` ID on the same X server | Reparent/container with a focus and geometry contract | Requires validation |
+| Linux / native Wayland | No universal transferable foreign-window ID for reparenting | Cooperative image transport or external rendering | Separate decision gate |
+| Linux / XWayland | X11 resource within XWayland | Only if the host integration is also compatible | Test separately |
+| All target platforms | Process and IPC | External game window with Profiler | Intended fallback |
 
-## Windows: HWND-Einbettung
+## Windows: HWND embedding
 
-Win32 kennt `SetParent()` auch für Fenster aus unterschiedlichen Prozessen. Es ändert Fensterstyles nicht automatisch. Microsoft dokumentiert zudem Probleme bei unterschiedlichen DPI-Awareness-Modi, einschließlich einer möglichen erzwungenen Änderung des Kindprozesses. [SetParent](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setparent)
+Win32 supports `SetParent()` for windows from different processes. It does not update window styles automatically. Microsoft also documents problems with different DPI-awareness modes, including a possible forced change to the child process. [SetParent](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setparent)
 
-Für FrameRift sind deshalb folgende Aufgaben vorgeschlagen:
+Proposed FrameRift tasks:
 
-- Ein eindeutiges Hostrechteck in der Profiler-Ansicht schaffen.
-- Elternbeziehung, Styles und bisherige Fenstergeometrie kontrolliert verwalten.
-- Größen in UI-Koordinaten und tatsächlichen Spielpixeln unterscheiden.
-- DPI-Verhalten des gestarteten Spielprozesses und des Frontends vor der Einbettung abstimmen.
-- Tastaturfokus, Mauskapture, relative Maus und Controller-Verhalten getrennt prüfen.
-- Vollbild, Minimieren, Wiederherstellen und Fensterneuerzeugung als Lebenszyklusereignisse behandeln.
-- Erst den Spielprozess beenden oder das Fenster geordnet lösen, bevor der Host zerstört wird.
+- Provide a defined host rectangle in the Profiler view.
+- Manage the parent relationship, styles and original window geometry explicitly.
+- Distinguish UI coordinates from actual game pixels.
+- Coordinate the launched game's and frontend's DPI behavior before embedding.
+- Test keyboard focus, mouse capture, relative mouse mode and controller behavior separately.
+- Treat fullscreen, minimize, restore and window recreation as lifecycle events.
+- Stop the game process or detach its window cleanly before destroying the host.
 
-Qt kann mit `QWindow::fromWinId()` einen geeigneten fremden Handle repräsentieren. Die API kann bei fehlender Unterstützung `nullptr` liefern und ist keine allgemeine Fernsteuerung des Fensters. [Qt Fremdfenster](https://doc.qt.io/qt-6/qwindow.html#fromWinId)
+Qt can represent a suitable foreign handle through `QWindow::fromWinId()`. It may return `nullptr` when unsupported and does not provide general remote control of the window. [Qt foreign windows](https://doc.qt.io/qt-6/qwindow.html#fromWinId)
 
-Bei Qt Quick kann `WindowContainer` das Rechteck verwalten. Sein natives Kindfenster liegt über gewöhnlichen Quick-Items; ein gezeichnetes Panel darf daher nicht einfach als Overlay über den Spielinhalt geplant werden. [Qt WindowContainer](https://doc.qt.io/qt-6/qml-qtquick-windowcontainer.html)
+In Qt Quick, `WindowContainer` can manage the rectangle. Its native child window sits above ordinary Quick items, so a drawn panel cannot simply be assumed to overlay the game. Qt is an evaluated alternative; FrameRift currently uses GTK4. [Qt WindowContainer](https://doc.qt.io/qt-6/qml-qtquick-windowcontainer.html)
 
-## Linux: X11 und XWayland
+## Linux: X11 and XWayland
 
-X11 kennt serverseitige Fensterressourcen und `XReparentWindow()`. Diese Grundlage erlaubt die Untersuchung eines prozessübergreifenden Containers auf demselben X-Server. Eine X11-ID allein löst jedoch Fokus, Eventrouting, Visual-/Renderer-Anforderungen und Zerstörung nicht. [Xlib-Fensterfunktionen](https://www.x.org/releases/current/doc/libX11/libX11/libX11.html)
+X11 provides server-side window resources and `XReparentWindow()`, allowing investigation of a container across processes on the same X server. An X11 ID alone does not solve focus, event routing, visual/renderer requirements or destruction. [Xlib window functions](https://www.x.org/releases/current/doc/libX11/libX11/libX11.html)
 
-Für FrameRift ist vorgeschlagen, X11 zunächst mit einem kooperativen SDL2/Vulkan-Testprozess zu validieren. Dabei werden Fensterneuerzeugung, Fokuswechsel, Resize und eine unveränderte Spielbildausgabe geprüft. Der Adapter verarbeitet SDL-Ereignisse weiterhin im Spielprozess.
+The proposed first X11 validation uses a cooperative SDL2/Vulkan test process. It checks window recreation, focus changes, resize and unchanged game image output. The adapter continues to handle SDL events in the game process.
 
-Ein Wayland-Desktop mit XWayland ist ein zusätzlicher Fall. Das untersuchte AnyPS5 nutzt aufgrund seiner SDL-Konfiguration voraussichtlich den X11-Pfad, falls dieser verfügbar ist; dies ist am gestarteten Build zu bestätigen. Ein nativ auf Wayland laufendes GTK-/Qt-Hostfenster ist nicht automatisch ein kompatibler X11-Elterncontainer. Ein erzwungener X11-Hostmodus ist deshalb höchstens eine dokumentierte Option, keine unsichtbare Universallösung.
+A Wayland desktop with XWayland is an additional case. Given its SDL configuration, the inspected AnyPS5 build is expected to use X11 if available; this must be confirmed in the launched build. A native Wayland GTK/Qt host is not automatically a compatible X11 parent container. Forcing an X11 host mode is at most a documented option, not a universal solution.
 
-## Linux: natives Wayland als eigenes Gate
+## Linux: native Wayland needs a separate decision
 
-Wayland-Oberflächen gehören zur jeweiligen Clientverbindung. Der Basismodellbeschreibung zufolge kennen Clients nicht die globale Position ihrer Oberflächen und können nicht auf die Oberflächen anderer Clients zugreifen. Das unterscheidet sich grundlegend von einem allgemeinen X11-Reparenting. [Wayland-Protokollmodell](https://wayland.freedesktop.org/docs/book/Protocol.html)
+Wayland surfaces belong to their client connection. The protocol model states that clients do not know their surfaces' global position and cannot access other clients' surfaces. This differs fundamentally from general X11 reparenting. [Wayland protocol model](https://wayland.freedesktop.org/docs/book/Protocol.html)
 
-Das optionale `xdg-foreign`-Protokoll kann eine exportierte Toplevel-Referenz übertragen und Beziehungen zwischen Oberflächen herstellen, beispielsweise für externe Dialoge. Es definiert damit keinen beliebigen Spielviewport, den ein anderer Prozess in seine UI-Szene ziehen kann. [Offizielle xdg-foreign-Protokolldefinition](https://gitlab.freedesktop.org/wayland/wayland-protocols/-/blob/main/unstable/xdg-foreign/xdg-foreign-unstable-v2.xml)
+The optional `xdg-foreign` protocol can transfer an exported toplevel reference and establish relationships between surfaces, for example for external dialogs. It does not define an arbitrary game viewport that another process can place in its UI scene. [Official xdg-foreign protocol definition](https://gitlab.freedesktop.org/wayland/wayland-protocols/-/blob/main/unstable/xdg-foreign/xdg-foreign-unstable-v2.xml)
 
-Vor dem Beschluss einer nativen Wayland-Einbettung muss ein eigener Nachweis beantworten:
+A native Wayland embedding prototype must answer:
 
-1. Welche konkreten Compositoren und Protokolle werden benötigt?
-2. Wer erzeugt die sichtbare Oberfläche und wer besitzt ihre Buffer?
-3. Wie gelangen die Spielbilder in die FrameRift-Szene?
-4. Wer empfängt Eingabe, und wie wird ein kontrollierter Fokuswechsel umgesetzt?
-5. Wie funktionieren Resize, Fractional Scaling und unterschiedliche Monitore?
-6. Was passiert bei fehlendem Protokoll, Rendererwechsel oder Verbindungsabbruch?
+1. Which compositors and protocols are required?
+2. Who creates the visible surface and owns its buffers?
+3. How do game images reach the FrameRift scene?
+4. Who receives input, and how are controlled focus changes implemented?
+5. How do resize, fractional scaling and different monitors work?
+6. What happens when a protocol is unavailable, the renderer changes or the connection fails?
 
-Solange diese Fragen nicht mit einem funktionierenden Prototyp beantwortet sind, bleibt die externe Spielansicht der geplante Wayland-Fallback. Eine Toolkitentscheidung allein kann dieses Gate nicht schließen.
+Until a working prototype answers these questions, the external game window remains the planned Wayland fallback. A toolkit choice alone cannot resolve this decision.
 
-## Alternative: gemeinsam nutzbare GPU-Bilder
+## Alternative: shared GPU images
 
-Ein kooperativer Renderer könnte Spielbilder in exportierbare Ressourcen schreiben, die FrameRift importiert und als Bestandteil seiner UI darstellt. Damit werden normale UI-Überlagerungen und Clipping grundsätzlich anders lösbar als mit einem fremden Kindfenster. Dieser Weg wäre jedoch eine eigene Renderer-/Adapterentwicklung.
+A cooperative renderer could write game images into exportable resources that FrameRift imports into its UI. This changes how overlays and clipping can work compared with a foreign child window. It would require separate renderer/adapter development.
 
-Vulkan unterscheidet externe Speicherressourcen und externe Synchronisation. Die API bietet plattformspezifische FD- beziehungsweise Win32-Handle-Wege und Capability-Abfragen. Ein Speicherhandle genügt ohne passenden Synchronisationsvertrag nicht. [Vulkan: External Memory and Synchronization](https://docs.vulkan.org/guide/latest/extensions/external.html)
+Vulkan distinguishes external memory resources from external synchronization. It offers platform-specific FD and Win32 handle paths with capability queries. A memory handle is insufficient without a matching synchronization contract. [Vulkan: External Memory and Synchronization](https://docs.vulkan.org/guide/latest/extensions/external.html)
 
-Der vorgeschlagene Vertrag muss zusätzlich Format, Farbraum, Abmessungen, Adapter/GPU, Besitz der Handles, Abschluss der Schreiboperationen und Freigabe alter Bilder definieren. Ein Wechsel zwischen Vulkan-Spielrenderer und einem anderen UI-Backend darf nicht als kostenloser Import angenommen werden. Die Hardware- und Treiberkombination muss den tatsächlich gewählten Pfad unterstützen.
+The proposed contract must define format, color space, dimensions, adapter/GPU, handle ownership, completion of writes and release of old images. Importing images from a Vulkan game renderer into a different UI backend cannot be assumed to be free. Hardware and drivers must support the chosen path.
 
-Die Wirkung auf Profiling ist separat zu messen: Zusätzliche Präsentation, Kopien oder Synchronisation können die ermittelten Zeiten verändern. Ein Screenshot oder CPU-Readback pro Frame ist höchstens ein begrenzter Diagnose-/Fallback-Weg und kein versprochener performanter Live-Transport.
+Measure the profiling impact separately: extra presentation, copies or synchronization may alter measured times. Per-frame screenshots or CPU readback are at most limited diagnostic/fallback paths, not a promised efficient live transport.
 
-## Vorgeschlagener IPC-Vertrag
+## Proposed IPC contract
 
-Das folgende Schema ist Planungsinhalt und noch keine API:
+This schema is planning material, not an existing API:
 
-| Nachrichtengruppe | Beispielinhalt | Zweck |
+| Message group | Example contents | Purpose |
 |---|---|---|
-| Handshake | Protokollversion, Sitzung, Prozessidentität, Backend, Fähigkeiten | Falsche Versionen oder Prozesse erkennen |
-| Fensterstatus | Erzeugt, ersetzt, zerstört, Generation, nativer Bezug | Veraltete Fensterdaten nicht weiterbenutzen |
-| Darstellung | Viewportgröße, Pixeldichte, Präsentationsmodus, Bestätigung | UI und Spielrenderer koordinieren |
-| Fokus | Wechselanfrage und bestätigter Zustand | UI-Shortcuts und Spieleingabe trennen |
-| Prozesszustand | Startet, läuft, beendet, Fehler | Klare Benutzerzustände ohne Hängen |
-| Profiler | Zeitbasis, Frame-ID, Messpunkt, Messquelle | Zahlen richtig zuordnen |
-| Optionaler Bildtransport | Format, Generation, Ressource, Sync-Zustand | Kontrollierter GPU-Sharing-Pfad |
+| Handshake | Protocol version, session, process identity, backend, capabilities | Detect wrong versions or processes |
+| Window status | Created, replaced, destroyed, generation, native reference | Reject stale window data |
+| Presentation | Viewport size, pixel density, presentation mode, acknowledgment | Coordinate UI and game renderer |
+| Focus | Change request and confirmed state | Separate UI shortcuts from game input |
+| Process state | Starting, running, stopped, error | Clear user states without hanging |
+| Profiler | Time base, frame ID, measurement point, source | Associate measurements correctly |
+| Optional image transport | Format, generation, resource, synchronization state | Controlled GPU sharing |
 
-Der Transport wird nach Toolkit- und Plattformprüfung ausgewählt. Named Pipes oder lokale Sockets sind mögliche Richtungen. Alle Nachrichten erhalten Längenbegrenzungen und klaren Besitz; interne Speicheradressen sind kein Datenformat.
+Choose transport after toolkit and platform validation. Named pipes or local sockets are possible approaches. All messages need length limits and clear ownership; internal memory addresses are not a data format.
 
-## Lebenszyklus und externer Fallback
+## Lifecycle and external fallback
 
-Der vorgeschlagene Ablauf lautet: Spiel starten, Adapterfähigkeit prüfen, Spielfenster abwarten, geeigneten Darstellungsweg auswählen, Profiler öffnen. Fehlt eine bestätigte Embed-Fähigkeit, bleibt das Spiel in seinem eigenen Fenster. Ein fehlgeschlagener Einbettungsversuch soll einen lesbaren Zustand liefern und nicht den Start blockieren.
+Proposed flow: launch game, check adapter capabilities, wait for its window, choose a supported presentation path and open Profiler. Without confirmed embedding support, the game stays in its own window. Failed embedding should report a readable state without blocking launch.
 
-Der Prozess-Controller muss ohne blockierenden UI-Wait auf das Ende reagieren. GIO bietet dafür im GTK-Weg unter anderem asynchrone Subprocess-Operationen; bei Qt wird der entsprechende Qt-Prozessweg bewertet. Ein Abbruchwunsch ist vom bestätigten Prozessende zu unterscheiden. [GIO Subprocess](https://docs.gtk.org/gio/class.Subprocess.html)
+The process controller must respond to termination without blocking the UI. GIO provides asynchronous subprocess operations for the GTK path; a Qt alternative would need its corresponding process approach evaluated. A cancellation request differs from confirmed process termination. [GIO Subprocess](https://docs.gtk.org/gio/class.Subprocess.html)
 
-Ein normaler Abschluss kehrt zur Bibliothek zurück und aktualisiert deren lokalen zuletzt-gespielt-Zustand. Ein Crash zerstört keine Bibliotheksdaten. Unverfügbare Messwerte werden als unverfügbar angezeigt; FrameRift erfindet keine Frame-Analyse aus einem bloßen sichtbaren Fenster.
+The intended normal exit returns to the library and updates local last-played state. A crash must preserve library data. Unavailable measurements are shown as unavailable; a visible window alone does not supply frame analysis.
 
-## Vorgeschlagene Nachweise vor Umsetzung
+## Proposed validation before embedding
 
-| Prüfung | Erwartetes Ergebnis |
+| Check | Expected result |
 |---|---|
-| Windows, kompatible und abweichende DPI-Modi | Verhalten dokumentiert; kein unbemerkter Darstellungsbruch |
-| X11 mit SDL2/Vulkan | Fenster zuverlässig identifiziert, Größe und Eingabe erhalten |
-| XWayland und nativer Wayland-Host | Kompatibilitätsgrenze sichtbar; externer Fallback funktioniert |
-| Natives Wayland | Separates Ergebnis statt einer X11-Erfolgsannahme |
-| Wiederholtes Resize/Fullscreen/Monitorwechsel | Kein veralteter Handle und kein zerstörter Host |
-| Spielende, Crash, Frontendende | Eindeutige Besitz- und Aufräumreihenfolge |
-| Frontend-Animation und Profiler-Aktualisierung | Zusätzliche CPU-/GPU-Last nachvollziehbar |
-| Hook bei abweichendem Build | Fehlende Hookfähigkeit erkannt; kein Startzwang |
-| GPU-Sharing, falls gewählt | Capability-, Format-, Sync- und Messkosten belegt |
+| Windows with matching and different DPI modes | Documented behavior; no unnoticed presentation failure |
+| X11 with SDL2/Vulkan | Reliable window identity, preserved size and input |
+| XWayland with a native Wayland host | Visible compatibility limits; working external fallback |
+| Native Wayland | Separate result, independent of X11 success |
+| Repeated resize/fullscreen/monitor changes | No stale handles or destroyed host |
+| Game exit, crash, frontend exit | Explicit ownership and cleanup order |
+| Frontend animation and Profiler updates | Understood additional CPU/GPU load |
+| Hooks in a different build | Missing hook support detected without preventing launch |
+| GPU sharing, if selected | Verified capabilities, formats, synchronization and measurement cost |
 
-Die Fensterintegration ist ein früher Architekturtest. Die vollständige Bibliothek und der Profiler sollen erst auf einer nachgewiesenen Plattformstrategie aufbauen.
+Window integration is an early architecture test for the planned embedded Profiler. The existing library does not establish a working embedding strategy.

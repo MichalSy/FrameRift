@@ -1,51 +1,60 @@
-# Entscheidungen und offene Fragen
+<!--
+SPDX-License-Identifier: AGPL-3.0-or-later
+Copyright (C) 2026 Michal Sytko and FrameRift contributors
+Original project: https://github.com/MichalSy/FrameRift
+Additional attribution terms: see NOTICE in the repository root.
+-->
 
-## Festgelegte Produktziele
+# Decisions and open questions
 
-| Thema | Entscheidung |
+## Product decisions
+
+| Topic | Decision |
 | --- | --- |
 | Name | **FrameRift** |
-| Zielgruppe | Spieler und Nutzer, die Spielperformance untersuchen möchten |
-| Plattformen | Native Desktop-Anwendung für Windows und Linux |
-| UI-Gefühl | Individuell, modern, kompakt, dunkle Graphitflächen mit Cyan-Akzent und sauberen Animationen |
-| Ansichten | Bibliothek zuerst; nach Spielauswahl eine eigene Spiel-/Profiler-Ansicht |
-| Bibliothek | Hero des ausgewählten Titels, dann „Zuletzt gespielt“, dann „Deine Spiele“ |
-| Spielansicht | Spiel im Zentrum; zuschaltbare Analysebereiche |
-| Modusnamen | **Spielen** und **Profiler** |
-| Artwork | SteamGridDB als primäre Quelle, einschließlich möglicher Animationen |
-| Projektgrenze | Eigenständiger Launcher; optionale, kleine Anbindung an AnyPS5 |
-| Datenhaltung | Spiele und Messdaten lokal; lokale Verwendung wird nicht als zusätzliches Spielmerkmal etikettiert |
+| Audience | Players and users investigating game performance |
+| Platforms | Native Windows and Linux desktop application; Linux is the current development platform |
+| UI | Custom, modern and compact, with dark graphite surfaces, cyan accents and restrained animations |
+| Views | Library first; a Profiler console is in development, with an embedded game/profiler view planned |
+| Library | Selected-game hero, then **Recently played**, then **Your games** |
+| Planned game view | Game at the center, with optional analysis panels |
+| Planned game-view modes | **Playing** and **Profiler** |
+| Artwork | SteamGridDB as the primary source, including animated assets when available |
+| Project boundary | Independent launcher with a small integration to the modified AnyPS5 fork |
+| Storage | Games and measurements are local; the UI does not add redundant local-game labels |
+| License | Original code and documentation use [AGPL-3.0-or-later](../LICENSE), including the attribution term in [NOTICE](../NOTICE) |
 
-Die beiden veröffentlichten Bilder beschreiben diese Richtung. Sie enthalten keine Kennzeichnung als Designstudie innerhalb der Oberfläche. Ihre Einordnung als Konzept wird in der Dokumentation erklärt.
+The two [design concepts](../assets/design/README.md) illustrate this direction. Their game artwork and measurements do not establish compatibility or implemented profiling features.
 
-## Technische Arbeitsannahmen
+## Technical choices and assumptions
 
-| Vorschlag | Warum er im Plan steht | Was ihn bestätigen muss |
+| Choice or proposal | Purpose | Remaining validation |
 | --- | --- | --- |
-| C++20 und CMake | Gemeinsamer nativer Kern und passende Runtime-/Plattformanbindung | Kleiner, reproduzierbarer Windows-/Linux-Build |
-| GTK4/libadwaita | Native UI und Interesse an der aktuellen GNOME-Technik | Eigene Gestaltung, Windows-Auslieferung, Fensterintegration und Animationen |
-| Qt 6 Quick/QML als Alternative | Individuelle native UI und relevante Fenster-APIs | Derselbe Integrationsversuch bei Problemen mit dem GTK-Pfad |
-| libcurl, JSON und SQLite | Klar abgegrenzte Aufgaben für Artwork, Metadaten und Katalog | Tatsächlich benötigter Umfang, Paketierung und Wartungsaufwand |
-| Optionales Telemetrieprotokoll | Messwerte mit eindeutiger Semantik und Frame-Zuordnung | Kleiner Runtime-Sender mit messbarem Overhead |
-| Kooperativer Window Host | Laufendes Spiel innerhalb des Programms | Getrennte Nachweise für Windows, X11 und eine Wayland-Desktop-Sitzung |
+| C++20 and CMake | Current native implementation and platform integration | Reproducible Windows build alongside Linux |
+| GTK4 | Current library toolkit | Windows packaging, window integration and animation behavior |
+| Optional libadwaita | Adaptive native components if needed | Styling and deployment requirements |
+| Qt 6 Quick/QML alternative | Custom native UI and relevant window APIs | Equivalent integration experiment if the GTK approach proves unsuitable |
+| libcurl, JSON-GLib and SQLite | Artwork requests, metadata and library cache | Packaging and maintenance requirements |
+| Optional telemetry protocol | Measurements with clear semantics and frame correlation | Small runtime sender with measurable overhead |
+| Cooperative window host | Running game inside the application | Separate evidence for Windows, X11 and a Wayland desktop session |
 
-Arbeitsannahmen sind keine endgültigen Abhängigkeitsentscheidungen. Besonders die Fensterintegration soll die Toolkit-Auswahl beeinflussen, bevor viel UI-Code geschrieben wird.
+GTK4 is implemented; optional dependencies and embedding approaches remain proposals. Window integration may influence future toolkit choices.
 
-## Offene technische Fragen
+## Open technical questions
 
-- Welcher Fensterpfad funktioniert mit den tatsächlichen AnyPS5-Artefakten? Reicht ein exportiertes natives Handle, braucht es einen kooperativen Adapter oder ist ein Hook für einen begrenzten Plattformfall sinnvoll?
-- Können Host und Spiel in einer Wayland-Sitzung verlässlich über einen gemeinsamen X11-/XWayland-Pfad arbeiten? Welche Grenzen bleiben bei einer nativen Wayland-UI?
-- Wie werden Spiel-, Tastatur-/Maus- und Controller-Fokus geregelt, wenn Analysefelder aktiv sind? Controller-Hintergrundeingaben müssen ausdrücklich berücksichtigt werden.
-- Welche CPU-/GPU-Messpunkte werden für den ersten Profiler verbindlich angeboten? Was bedeutet die Frame-ID bei mehreren Einreichungen und verzögerten GPU-Ergebnissen?
-- Wie groß darf der Overhead je Messmodus sein, und wie wird ein Vergleich reproduzierbar durchgeführt?
-- Welches Capture-Format und welche Exportformate lohnen sich zuerst? Bildaufnahme ist eine zusätzliche Datenquelle mit eigenen Kosten.
-- Welche UI-Bibliothek stellt animiertes WebP auf beiden Zielplattformen zuverlässig und effizient dar?
-- Wie werden Spielausgaben, unterschiedliche Builds und Startprofile möglichst einfach importiert und angezeigt?
-- Wie werden SteamGridDB-Zugangsdaten lokal gespeichert, und welche Variante der Artwork-Auswahl ist für Nutzer am verständlichsten?
-- Original FrameRift code and documentation use [MIT](../LICENSE). Dependency distribution requirements remain to be reviewed.
+- Which window approach works with real AnyPS5 artifacts: an exported native handle, a cooperative adapter or a hook for a limited platform case?
+- Can host and game reliably use a shared X11/XWayland path in a Wayland session? What limits remain for a native Wayland UI?
+- How should game, keyboard/mouse and controller focus behave while analysis fields are active? Background controller input needs explicit handling.
+- Which CPU/GPU measurement points should the first timing profiler provide? What does a frame ID mean across multiple submissions and delayed GPU results?
+- What overhead is acceptable for each measurement mode, and how should comparisons be reproduced?
+- Which capture and export formats should come first? Image capture is an additional data source with its own costs.
+- Can the development WebP animation path be verified reliably and efficiently on Windows?
+- How should multiple game outputs, builds and launch profiles be imported and displayed with minimal complexity?
+- How should manual artwork selection work, and how should desktop-keyring settings be packaged on Windows?
+- What distribution requirements apply to the dependency licenses? AnyPS5 stays separately licensed under GPL-2.0-only; VTE uses LGPL-3.0-or-later.
 
-## Noch nicht für den ersten Release zugesagt
+## Extensions without a first-release commitment
 
-Die detaillierte Frame-GPU-Timeline, Shader-Hotspots, Imports-Analyse, automatisierte Tests, umfassende Controller-Navigation der Bibliothek und Build-/Relink-Automation bleiben Erweiterungsideen. Die Dokumentation soll sie konkret genug festhalten, um später gezielt priorisieren zu können.
+Detailed GPU timelines, shader hotspots, import analysis, automated performance tests, comprehensive controller navigation and broader build/relink automation remain extension ideas. Keep their descriptions concrete enough to prioritize later.
 
-Die ASTRO-BOT-Darstellung entscheidet weder über Spielunterstützung noch über die verfügbare Messinstrumentierung. Beide müssen an realen Builds nachgewiesen werden.
+The ASTRO BOT artwork in the design concepts determines neither game support nor measurement availability. Both require evidence from real builds.

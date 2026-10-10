@@ -1,3 +1,10 @@
+<!--
+SPDX-License-Identifier: AGPL-3.0-or-later
+Copyright (C) 2026 Michal Sytko and FrameRift contributors
+Original project: https://github.com/MichalSy/FrameRift
+Additional attribution terms: see NOTICE in the repository root.
+-->
+
 # FrameRift working rules
 
 - Read Atlas Start through Proxy MCP: `06b0f012-18a4-44a5-bfcc-64e29d4632d3`; search Atlas for existing project knowledge.

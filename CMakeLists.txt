@@ -1,3 +1,8 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Michal Sytko and FrameRift contributors
+# Original project: https://github.com/MichalSy/FrameRift
+# Additional attribution terms: see NOTICE in the repository root.
+
 cmake_minimum_required(VERSION 3.20)
 project(FrameRift VERSION 0.1.0 LANGUAGES C CXX)
 

@@ -1,4 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
+<!--
+SPDX-License-Identifier: AGPL-3.0-or-later
+Copyright (C) 2026 Michal Sytko and FrameRift contributors
+Original project: https://github.com/MichalSy/FrameRift
+Additional attribution terms: see NOTICE in the repository root.
+-->
+
 <gresources>
   <gresource prefix="/io/github/framerift">
     <file>ui/style.css</file>

@@ -1,78 +1,87 @@
-# Design und Bedienung
+<!--
+SPDX-License-Identifier: AGPL-3.0-or-later
+Copyright (C) 2026 Michal Sytko and FrameRift contributors
+Original project: https://github.com/MichalSy/FrameRift
+Additional attribution terms: see NOTICE in the repository root.
+-->
 
-## Produktgefühl
+# Design and interaction
 
-FrameRift soll sich wie eine moderne Gaming-Anwendung anfühlen und gleichzeitig präzise Analysewerkzeuge anbieten. Die Bibliothek darf visuell ansprechend sein, ohne zur schwer bedienbaren Posterwand zu werden. Der Profiler soll viele Informationen zeigen können, ohne das laufende Spiel aus dem Mittelpunkt zu verdrängen.
+## Product feel
 
-Die Gestaltung ist individuell: dunkle Graphitflächen, zurückhaltende Trennlinien, kompakte Typografie, klare Größenverhältnisse und ein Cyan-Akzent. Das kantige F-Symbol im Entwurf ist eine Richtung für das spätere App-Icon. Ein endgültiger Vektor-Master, kleine Icon-Größen und eine vollständige Wortmarke müssen noch ausgearbeitet werden. Die Bilder allein sind kein fertiges Icon-Paket.
+FrameRift should feel like a modern gaming application with precise analysis tools. The library should be visually appealing and easy to navigate. The profiler should show detailed information while keeping the running game central.
 
-Die Oberfläche wird nativ umgesetzt. Gute Animationen bedeuten kurze, gleichmäßige Übergänge und unmittelbare Rückmeldung. Bibliotheksbilder dürfen lebendig wirken; Analysewerkzeuge müssen ruhig und ablesbar bleiben. Die Performance der UI wird gemessen, besonders während das Spiel und der Profiler gleichzeitig aktiv sind.
+The visual direction uses dark graphite surfaces, restrained separators, compact typography, clear proportions and a cyan accent. The angular F symbol suggests a future app icon. A final vector master, small icon sizes and complete wordmark still need development; the images are not a finished icon package.
 
-## Ansicht 1: Bibliothek
+The UI is native. Animations should provide short, smooth transitions and immediate feedback. Library artwork may feel lively; analysis tools must remain calm and readable. UI performance needs measurement, especially when the game and profiler run together.
 
-![Bibliothek](../assets/design/library.png)
+The committed `main` implementation covers the library and cache. Scanning, launching, profiler output, keyring settings and animated heroes are development work. The embedded game view and frame-analysis layout below remain design targets.
 
-### Aufbau und Reihenfolge
+## View 1: Library
 
-1. **Kopfzeile:** FrameRift-Marke, Suche und wenige globale Aktionen. Die Kopfzeile bleibt kompakt und verbraucht nicht den Platz eines zusätzlichen Dashboards.
-2. **Hero des ausgewählten Spiels:** breites Artwork, Titellogo und eine verständliche Startaktion. Das Artwork wird mit einem dunklen Verlauf so eingebunden, dass Text und Buttons unabhängig vom Motiv lesbar bleiben.
-3. **Zuletzt gespielt:** eine Reihe breiter Karten. Diese ist der schnellste Weg zurück in ein Spiel und steht vor der vollständigen Sammlung.
-4. **Deine Spiele:** ein dichteres Raster aus Hochformat-Covern mit Suche, Filter und Sortierung.
+![Library design concept](../assets/design/library.png)
 
-Der Hero ersetzt keine separate Detailseite. Er dient als visuelle Auswahl und unmittelbarer Einstieg. Eine dauerhaft geöffnete Informationsspalte, eine vertikale Spieleliste und die Profiler-Seitenleiste gehören nicht in die Bibliotheksansicht.
+### Layout and order
 
-### Spiel auswählen und starten
+1. **Header:** FrameRift branding, search and a few global actions. Keep it compact.
+2. **Selected game hero:** Wide artwork, title logo and a clear launch action. A dark gradient keeps text and buttons readable across images.
+3. **Recently played:** A row of wide cards before the full collection, providing a quick route back into a game.
+4. **Your games:** A denser portrait-cover grid with search, filtering and sorting.
 
-Ein Klick auf ein Cover wählt das Spiel aus und aktualisiert den Hero. **Spielen** startet mit dem normalen Spielprofil. **Mit Profiler starten** startet mit den dafür erforderlichen Instrumentierungsoptionen, sofern die konfigurierte AnyPS5-Runtime sie unterstützt. Die Beschriftung soll den tatsächlichen Startmodus wiedergeben und keine Messfähigkeit behaupten, die der Build nicht besitzt.
+The hero provides visual selection and immediate access; it does not replace a separate details view. A permanently open information column, vertical game list and profiler sidebar do not belong in the library view.
 
-Optionen eines Spiels können über ein Kontextmenü oder eine kleine, vorübergehende Ansicht erreichbar werden: ausführbare Datei, Spielverzeichnis, Startprofil, Artwork-Zuordnung und bisherige Aufzeichnungen. Damit bleibt die Standardansicht auf Auswahl und Start fokussiert.
+### Selecting and launching a game
 
-Für den ersten nutzbaren Umfang reicht ein klarer Import über eine Ordner- oder Programmauswahl. Automatisches Scannen mehrerer Bibliothekswurzeln kann folgen. Gleiche Titel in verschiedenen Builds müssen unterscheidbar bleiben, ohne die Sammlung mit technischen Dateinamen zu überladen.
+Clicking a cover selects the game and updates the hero. In the intended launch flow, **Play** uses the normal game profile. **Launch with profiler** adds the required instrumentation options when the configured modified AnyPS5 runtime supports them. Labels must reflect the actual launch mode and available measurement capabilities.
 
-### Größenverhältnisse
+A context menu or small temporary view can expose the executable, game directory, launch profile, artwork mapping and previous recordings. The default view stays focused on selection and launch.
 
-Das Bild zeigt eine mögliche Desktop-Komposition und keine verpflichtende Pixelgeometrie. Der Hero darf auf kleineren Fenstern niedriger werden. Covergrößen müssen sich über sinnvolle Zwischenstufen anpassen; übergroße Buttons und Karten sind zu vermeiden. Die Bibliothek braucht auch bei vielen Titeln eine brauchbare Informationsdichte.
+The development scanning flow imports metadata from configured game folders. Different builds with the same title must remain distinguishable without filling the collection with technical filenames. Display titles come from metadata.
 
-Lange Namen, fehlende Logos, sehr helle Bilder und fehlendes Artwork werden ausdrücklich mitgestaltet. Ohne Online-Verbindung bleiben gespeicherte Bilder und lokale Metadaten nutzbar. Fehlende Bilder erhalten eine ruhige Ersatzdarstellung mit Titel und verfügbarem lokalen Icon.
+### Proportions
 
-## Ansicht 2: Spiel und Profiler
+The image shows a possible desktop composition, not required pixel geometry. The hero may become shorter in smaller windows. Keep cover sizes stable and use wider windows for additional grid columns. Avoid oversized buttons and cards; retain useful information density with many titles.
 
-![Spiel und Profiler](../assets/design/profiler.png)
+Account for long names, missing logos, very bright images and missing artwork. Cached images and local metadata remain usable offline. Missing artwork should receive a quiet fallback with the title and any available local icon.
 
-### Spielen
+## View 2: Game and profiler
 
-Nach dem Start wechselt die Anwendung in eine eigenständige Spielansicht. Das Spielfenster beziehungsweise die Spieloberfläche füllt den zentralen Bereich. Die wichtigsten Sitzungsaktionen sind erreichbar: Spiel beenden, zur Bibliothek zurückkehren, Profiler öffnen, Darstellung ändern und den Sitzungsstatus sehen.
+![Game and profiler design concept](../assets/design/profiler.png)
 
-Die Bibliotheks-Cover bleiben nicht als große Seitenleiste sichtbar. Ein Wechsel zurück in die Bibliothek ist eine Navigation, keine Einladung zum unbemerkten Start einer zweiten Instanz. Ein laufendes Spiel braucht einen eindeutigen Status und eine klare Zuordnung zur Sitzung.
+### Playing
+
+In the planned integrated view, launching opens a dedicated game view. The game window or surface fills the center. Session actions include stopping the game, returning to the library, opening the profiler, changing presentation and viewing session status.
+
+Library covers do not remain as a large sidebar. Returning to the library must not silently launch a second instance. A running game needs clear status and association with its session.
 
 ### Profiler
 
-Im Modus **Profiler** bleiben Bild und Eingabe des Spiels aktiv. Rechts erscheint die **Frame-Analyse**, unten ein skalierbarer Analysebereich. Die Aufteilung soll per Splitter veränderbar und als Layout gespeichert werden können. Analysebereiche können geschlossen werden, damit mehr Platz für das Spiel bleibt.
+In the planned **Profiler** layout, game rendering and input remain active. **Frame analysis** appears on the right, with a resizable analysis area below. Splitters should adjust the layout, which can be saved. Analysis panels can close to leave more space for the game.
 
-Die rechte Seite soll den ausgewählten Frame erläutern: Frame-ID, verfügbare CPU-/GPU-Zeiten, Submit-Informationen und später Draw-Calls, Pipeline-Wechsel oder Shader-/Pipeline-Hotspots. Eine fehlende Datenquelle zeigt „nicht verfügbar“ oder eine konkrete Messgrenze. Eine Zahl aus einem Zehn-Sekunden-Aggregat darf nicht wie eine Einzel-Frame-Messung aussehen.
+The right panel should explain the selected frame: frame ID, available CPU/GPU times, submission details and, later, draw calls, pipeline changes or shader/pipeline hotspots. Missing data must display "unavailable" or a specific measurement limit. A ten-second aggregate must not look like a single-frame measurement.
 
-Der untere Bereich enthält zunächst **Frame-Zeiten** und **Logs**. Die im Entwurf sichtbaren Bereiche **Imports** und **Tests** beschreiben weitere mögliche Werkzeuge. Sie sind noch kein festgelegter Umfang der ersten Version. Imports könnten Runtime-Aufrufe und fehlende Symbole erklären; Tests könnten wiederholbare Starts und Messläufe bündeln. Deren Datenquellen und Bedienung sind separat zu entwerfen.
+The lower area initially targets **Frame times** and **Logs**. The concept's **Imports** and **Tests** tabs are possible additional tools, outside the established first-version scope. Imports could explain runtime calls and missing symbols; Tests could organize repeatable launches and measurement runs. Their data sources and interaction need separate design. The current development profiler provides console output; frame analysis remains planned.
 
-### Live-Daten und Frame-Auswahl
+### Live data and frame selection
 
-Die Zeitleiste läuft zunächst live. Wählt man einen Frame oder Zeitbereich aus, bleibt die Auswahl stabil, während neue Daten eintreffen. Ein sichtbarer Zustand unterscheidet „Live folgen“ von „Auswahl ansehen“. Zum Live-Ende gelangt man mit einer eindeutigen Aktion zurück.
+The planned timeline initially follows live data. Selecting a frame or time range keeps that selection stable while new data arrives. A visible state distinguishes "Follow live" from "Inspect selection", with a clear action to return to the live end.
 
-Eine angehaltene Profiler-Anzeige hält das Spiel nicht automatisch an. Spielpause wäre eine eigene Funktion mit einer tatsächlich unterstützten Runtime-Schnittstelle. Eine Aufzeichnung muss deutlich anzeigen, ob sie nur Telemetrie erfasst oder zusätzlich Bilder enthält. Die Speicherung eines Frames ist ebenfalls keine Zusage für deterministisches Replay.
+Pausing the profiler display does not automatically pause the game. Game pause would require a separate supported runtime interface. A recording must state whether it contains telemetry alone or images too. Saving a frame does not promise deterministic replay.
 
-## Animationen, Artwork und Messbetrieb
+## Animations, artwork and profiling
 
-Für Karten sind leichte Hover-Reaktionen und dezente Auswahlübergänge geplant. Der Hero-Wechsel kann kurz überblendet werden. Seitenleisten und Analysebereiche dürfen weich ein- und ausblenden, müssen aber unmittelbar bedienbar sein. Große Parallax-Effekte, dauerhaft animierte Diagrammhintergründe und ständig springende Ziffern würden die Bedienung erschweren.
+Cards may use light hover feedback and subtle selection transitions. Hero changes may briefly crossfade. Sidebars and analysis panels may transition smoothly while remaining immediately usable. Large parallax effects, continuously animated chart backgrounds and constantly jumping numbers would make interaction harder.
 
-SteamGridDB bleibt die primäre Artwork-Quelle. Animierte Hero-Bilder sollen möglich sein, wenn die konkrete UI-Bibliothek und der Decoder sie zuverlässig darstellen. Für reproduzierbare Messungen sollte FrameRift eigene Artwork-Animationen pausieren oder auf ein statisches Bild wechseln können. Weitere Details stehen in [Artwork](artwork.md).
+SteamGridDB remains the primary artwork source. Animated hero playback is part of the development work; platform support still needs validation. For reproducible measurements, FrameRift should be able to pause its artwork animations or show a still image. See [Artwork](artwork.md).
 
-## Eingabe und Zugänglichkeit
+## Input and accessibility
 
-Die Bibliothek braucht vollständige Tastaturnavigation mit sichtbarem Fokus. Controller-Navigation ist eine mögliche Ergänzung; Controller-Eingabe im Spiel wird separat betrachtet. Die Startaktion darf nicht durch einen Fokuswechsel unabsichtlich ausgelöst werden.
+The library needs complete keyboard navigation with visible focus. Controller navigation is a possible addition; game controller input is considered separately. A focus change must not accidentally trigger a launch.
 
-Im Profiler muss erkennbar sein, ob Tastatur und Maus gerade das Spiel oder ein Analysefeld bedienen. Suchfelder und Tastenkürzel dürfen keine Spielaktionen auslösen. Ein Fokuswechsel sollte gezielt möglich sein, ohne das Spielbild zu verlassen. Die Plattformversuche prüfen genau diese Übergänge.
+The profiler must make clear whether keyboard and mouse input controls the game or an analysis field. Search fields and shortcuts must not trigger game actions. Users should be able to deliberately switch focus without leaving the game image. Platform experiments test these transitions.
 
-Zu berücksichtigen sind Schrift- und DPI-Skalierung, ausreichender Textkontrast, reduzierte Animationen, verständliche Symbole mit Textalternativen und farbunabhängige Darstellung von Ausreißern. Die kleinen Texte in den Entwürfen definieren keine minimale Schriftgröße für die Implementierung.
+Account for font and DPI scaling, sufficient text contrast, reduced motion, clear icons with text alternatives and outlier indicators that do not rely solely on color. Small text in the concepts does not define the implementation's minimum font size.
 
-## Einordnung der Bilder
+## About the images
 
-Die beiden PNGs sind visuelle Zielbilder. Sie zeigen noch keine implementierte Fensterintegration, kein existierendes Telemetrieprotokoll und keine reale Messung des dargestellten Spiels. Die Quellen und die Verwendung des ASTRO-BOT-Artworks sind in den [Bildquellen](../assets/design/README.md) dokumentiert.
+Both PNGs show visual targets. They do not demonstrate implemented window integration, an existing telemetry protocol or actual measurements of the depicted game. Sources and ASTRO BOT artwork use are documented in [Image sources](../assets/design/README.md).

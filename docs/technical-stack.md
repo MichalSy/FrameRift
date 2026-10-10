@@ -1,85 +1,99 @@
-# Bibliotheken und Build
+<!--
+SPDX-License-Identifier: AGPL-3.0-or-later
+Copyright (C) 2026 Michal Sytko and FrameRift contributors
+Original project: https://github.com/MichalSy/FrameRift
+Additional attribution terms: see NOTICE in the repository root.
+-->
+
+# Libraries and build
 
 ## Status
 
-Die Spielebibliothek ist mit C++20, CMake, GTK4, SQLite, libcurl und JSON-GLib implementiert. Build- und Startbefehle stehen in der [README](../README.md). Die Entwicklungsplattform ist Linux. Windows-Build und Auslieferung sind noch ungeprüft. Weitere Screens sind nicht Teil des aktuellen Abschnitts.
+Committed `main` implements the game library with C++20, CMake, GTK4, SQLite, libcurl and JSON-GLib. Development work adds GTK4 VTE for the Profiler console, libsecret for artwork credentials, libwebp for animated heroes and GIO subprocesses for Linux launch. Build and run commands are in the [README](../README.md). Linux is the development platform; Windows builds and distribution remain unverified.
 
-## Eingebaute Bausteine
+## Implemented components
 
-| Bereich | Baustein | Aufgabe |
+The table covers both committed `main` and the development additions identified above.
+
+| Area | Component | Purpose |
 | --- | --- | --- |
-| Sprache | C++20 | Bibliotheksdomäne und native UI |
-| Build | CMake ab 3.20, Ninja, pkg-config | Programm, Cache-Check und Ressourcen bauen |
-| UI | GTK4 ab 4.12 | Native Widgets, Rendering und Eingabe über die C-API |
-| GTK-Umfeld | GLib/GObject/GIO | Anwendung, Signals, Ressourcen und Cache-Verzeichnis |
-| Lokaler Cache | SQLite3 | Spielmetadaten, SteamGridDB-Zuordnung und lokale Bildpfade |
-| HTTP | libcurl | SteamGridDB-API und Bild-Downloads außerhalb der UI-Callbacks |
-| JSON | JSON-GLib | SteamGridDB-Antworten mit vorhandenen GLib-Bausteinen lesen |
-| Ressourcen | `glib-compile-resources` | CSS und App-Zeichen als GResource einbetten |
-| Checks | CTest und kleines C++-Programm | Cache-Verhalten ohne Testframework prüfen |
+| Language | C++20 | Library domain and native UI |
+| Build | CMake 3.20+, Ninja, pkg-config | Build the program, cache check and resources |
+| UI | GTK4 4.12+ | Native widgets, rendering and input through the C API |
+| Console | GTK4 VTE 0.70+ | Output-only terminal display, ANSI handling and bounded scrollback; development work |
+| GTK stack | GLib/GObject/GIO | Application, signals, resources, cache locations and subprocesses |
+| Local cache | SQLite3 | Game metadata, SteamGridDB mappings and local artwork paths |
+| HTTP | libcurl 7.85+ | SteamGridDB API and image downloads outside UI callbacks |
+| JSON | JSON-GLib | Read SteamGridDB responses using the existing GLib stack |
+| Credentials | libsecret | Store the artwork API key in the desktop keyring; development work |
+| Hero animation | libwebp and libwebpdemux | Decode and composite timed WebP frames for the selected GTK hero; development work |
+| Resources | `glib-compile-resources` | Embed CSS and app marks as GResources |
+| Checks | CTest and small C++ programs | Check cache behavior and the development launch flow without a test framework |
 
-Es gibt einen nativen UI-Prozess und keine Browser-Laufzeit. Weitere Abhängigkeiten werden erst bei einem konkreten Bedarf hinzugefügt. Die Toolkit-Abwägung für spätere Plattformintegration steht in [Toolkit und Plattformen](toolkit-and-platforms.md).
+FrameRift has a native UI process and no browser runtime. Dependencies are added only for a concrete need. [Toolkit and platforms](toolkit-and-platforms.md) covers the toolkit decision for later platform integration.
 
-## Weitere vorgeschlagene Bausteine
+## Other proposed components
 
-| Bereich | Vorschlag | Aufgabe und Einordnung |
+| Area | Proposal | Purpose and scope |
 | --- | --- | --- |
-| Anwendungsbausteine | libadwaita | Adaptive Komponenten und Anwendungsstruktur; einzelne Komponenten passend zum eigenen Design auswählen |
-| UI-Alternative | Qt 6 + Qt Quick/QML | Native, individuell gestaltbare UI und plattformbezogene Fensterintegration; Alternative beim Toolkit-Gate |
-| Eigene Logs | spdlog, optional | Strukturierte Diagnose von FrameRift; Spielausgabe bleibt separat zuordenbar |
-| Capture-Kompression | zstd, optional | Größere Messaufzeichnungen in einem Worker komprimieren |
-| Entwicklungsprofiling | Tracy, optional | FrameRift-Overhead und gezielte Runtime-Instrumentierung untersuchen |
+| Application components | libadwaita | Adaptive components and application structure; select components that suit the design |
+| UI alternative | Qt 6 + Qt Quick/QML | Native, customizable UI and platform window integration; alternative at the toolkit decision point |
+| App logs | spdlog, optional | Structured FrameRift diagnostics; keep game output separately identifiable |
+| Capture compression | zstd, optional | Compress larger measurement recordings in a worker |
+| Development profiling | Tracy, optional | Investigate FrameRift overhead and selected runtime instrumentation |
 
-GTK4/libadwaita und Qt sind alternative Frontend-Wege. Beide parallel in die erste Version einzubauen wäre ohne konkreten Nutzen unnötiger Aufwand. Ebenso sollte ein HTTP-Client ausgewählt werden, statt libcurl und weitere Clients für dieselbe Aufgabe vorzusehen.
+GTK4/libadwaita and Qt are alternative frontend paths. Including both in the first version without a concrete benefit would add unnecessary work. Likewise, select one HTTP client rather than using libcurl and another client for the same task.
 
-## GTK4 und libadwaita im C++-Projekt
+## GTK4 and libadwaita in C++
 
-GTK4 und libadwaita stellen C-APIs bereit. Die Vorschau verwendet GTK4 direkt aus C++. Besitzverhältnisse von GObject-Referenzen und Callback-Lebensdauer bleiben explizit; C++-Ausnahmen dürfen keine C-Callbacks verlassen. gtkmm und libadwaita sind nicht eingebaut und werden nur bei einem konkreten Nutzen erwogen.
+GTK4 and libadwaita provide C APIs. The preview uses GTK4 directly from C++. GObject reference ownership and callback lifetimes stay explicit; C++ exceptions must not escape C callbacks. gtkmm and libadwaita are not included and will be considered only when they offer a concrete benefit.
 
-Die eigene Gestaltung soll nicht aus einer großen Menge undokumentierter Theme-Overrides bestehen. Wiederverwendbare Karten, Hero-Bereich, Toolbars, Zeitleiste und Frame-Details brauchen eine bewusst entworfene Komponentenbasis. libadwaita wird nach konkretem Nutzen ausgewählt und legt nicht automatisch jedes Detail der Oberfläche fest.
+The custom design should not depend on a large set of undocumented theme overrides. Reusable cards, hero content, toolbars, timelines and frame details need a deliberately designed component base. libadwaita should be selected for specific benefits rather than defining every UI detail automatically.
 
-Windows-Unterstützung ist sowohl eine Backend- als auch eine Auslieferungsfrage. DLLs, Bild-Loader, Ressourcen, Schriftverhalten und Icons müssen in einem sauberen Paket funktionieren. Eine auf dem Entwicklungsrechner sichtbare Oberfläche ist noch keine validierte Endnutzerinstallation.
+Windows support concerns both the backend and distribution. DLLs, image loaders, resources, fonts and icons must work in a clean package. A working UI on the development machine does not validate an end-user installation.
 
-## Datenverarbeitung
+## Data processing
 
-JSON-GLib liest derzeit die SteamGridDB-Antworten. Die Bibliothek verwendet damit vorhandene GLib-Bausteine und braucht keine zweite JSON-Bibliothek. Ein späterer Hochfrequenzkanal muss seine tatsächliche Nachrichtenrate und Kosten separat prüfen. Für große Ereignismengen kann ein kompakteres, versioniertes Format sinnvoll werden. Ein Formatwechsel darf die Bedeutung der Messwerte nicht verändern.
+JSON-GLib currently reads SteamGridDB responses. This reuses the existing GLib stack without requiring another JSON library. Any later high-frequency channel must assess its actual message rate and cost separately. A compact, versioned format may suit larger event volumes. A format change must preserve measurement semantics.
 
-SQLite speichert den Katalog und Indizes. Die primäre Messdatenablage wird unabhängig davon entworfen. Für Capture-Kompression ist zstd ein möglicher Baustein; Kompression und Dateischreiben bleiben außerhalb des Spielthreads und der UI-Zeichenroutine.
+SQLite stores the catalog and indexes. The primary measurement store will be designed separately. zstd is a possible capture-compression component; compression and file writes must stay outside the game thread and UI drawing routine.
 
-libcurl verarbeitet die HTTPS-Abfragen und Bild-Downloads. Metadaten und Bilder liegen anschließend im lokalen Cache. Der Zugangsschlüssel wird zur Laufzeit über `STEAMGRIDDB_API_KEY` übergeben; Cache und Diagnose enthalten ihn nicht. Netzwerkzugriffe dürfen die GTK-Oberfläche nicht blockieren. Weitere Anforderungen wie manuelle Zuordnung, Aktualisierung und Rate-Limit-Verhalten gehören in kleine, gezielte Erweiterungen.
+libcurl handles HTTPS requests and image downloads. Metadata and images are then stored in the local cache. In the development build, Settings saves the API key through libsecret in the desktop keyring; `STEAMGRIDDB_API_KEY` takes precedence. Caches and diagnostics exclude the key. Keyring access has a timeout and runs outside the GTK thread, as do network requests. Manual matching, refresh behavior and rate limits belong in small, focused extensions.
 
-## SDL2, Vulkan und Bildformate
+## SDL2, Vulkan and image formats
 
-Die untersuchte AnyPS5-Runtime verwendet SDL2 und Vulkan. Diese gehören zuerst zum Spielprozess. FrameRift benötigt SDL2 nur dann selbst als Abhängigkeit, wenn ein konkreter Adapter oder eine eigene Controller-Navigation darauf aufbaut. Ein Profiler-Diagramm muss nicht die Grafik-API des Spiels übernehmen.
+The examined AnyPS5 runtime uses SDL2 and Vulkan. These primarily belong to the game process. FrameRift needs SDL2 itself only if a concrete adapter or controller-navigation feature depends on it. A profiler chart does not need to use the game's graphics API.
 
-SteamGridDB liefert statische und animierte Bildvarianten. Die tatsächlich benötigten Loader für PNG, JPEG, WebP und animiertes WebP werden am gewählten Toolkit geprüft. libwebp kann als zusätzlicher Decoder infrage kommen, falls die vorhandenen Loader das benötigte Format nicht ausreichend unterstützen. Die Existenz eines WebP-Decoders allein garantiert keine korrekte Animation, Frame-Disposition oder günstige GPU-Nutzung.
+GTK loads static PNG and JPEG images. The development hero module in `src/ui` uses libwebpdemux for animated WebP: the decoder composites frames with transparency and disposal rules, while a GTK tick controls frame durations and loops. Compressed files are limited to 64 MiB, and WebP canvases to 16 million pixels before decoder allocation. Hidden heroes and disabled GTK animations pause playback. Windows playback remains unverified.
 
-Die integrierte Spieloberfläche ist ein eigener Plattformbereich. Ein normaler Vulkan-Header oder ein SDL-Linkziel löst nicht automatisch das Teilen einer Spieloberfläche zwischen zwei Prozessen. Dafür gelten die im [Fensterdokument](game-window-integration.md) beschriebenen Anforderungen.
+An integrated game view is a separate platform concern. A Vulkan header or SDL link target does not automatically allow two processes to share a game surface. [Game-window integration](game-window-integration.md) describes the requirements.
 
-## Tracy und FrameRift-Profiler
+## Tracy and the FrameRift profiler
 
-Tracy ist ein möglicher Entwicklungshelfer und unterstützt unter anderem CPU- und Vulkan-GPU-Profiling. Damit können gezielte instrumentierte Builds und der Einfluss des Launchers untersucht werden. Es ist keine automatische Quelle für alle im Design gezeigten Messwerte und kein bereits vorhandener FrameRift-Backend-Vertrag.
+Tracy is a possible development tool with CPU and Vulkan GPU profiling support. It could help investigate selected instrumented builds and launcher overhead. It is neither an automatic source for every measurement shown in the designs nor an existing FrameRift backend contract.
 
-FrameRifts Benutzeroberfläche braucht auch ohne eine umfassende Tracy-Integration verständliche, korrekt zugeordnete Daten. Ein späterer Import oder Export zu externen Profilern kann sinnvoll sein, sobald Sitzungsformat und Messsemantik stabil sind.
+The FrameRift UI needs understandable, correctly correlated data even without a comprehensive Tracy integration. Importing or exporting external profiler data may be useful once the session format and measurement semantics are stable.
 
-## Versionen und Auslieferung
+## Versions and distribution
 
-Die Mindestversionen der eingebauten Bausteine stehen oben und werden von CMake geprüft. CI und Endnutzerpakete für Windows und Linux sind noch geplant. Linux/X11 und Linux/Wayland brauchen getrennte Integrationsprüfungen, weil erfolgreiche Paketinstallation keine identischen Fähigkeiten bei der Spielfensterintegration bedeutet.
+CMake checks the minimum versions listed above. CI and end-user packages for Windows and Linux remain planned. Linux/X11 and Linux/Wayland need separate integration checks: successful package installation does not imply identical game-window integration capabilities.
 
-Ein Packaging-Spike entscheidet zwischen passenden Werkzeugen für den GTK- oder Qt-Pfad. MSYS2, gvsbuild, Paketmanager oder andere Dependency-Strategien sind zu bewerten; es gibt derzeit keine festgelegte Kombination mit einem bestimmten Windows-Compiler. Ein Endnutzerpaket sollte seine nötigen Laufzeitbibliotheken nachvollziehbar mitbringen.
+A packaging experiment should select tools for the GTK or Qt path. MSYS2, gvsbuild, package managers and other dependency strategies need evaluation; no combination with a particular Windows compiler has been chosen. An end-user package should include its required runtime libraries with clear provenance.
 
-Ein vollständiges Lizenzinventar wird mit der Auslieferung erstellt. Besonders ein Toolkit-Wechsel muss die jeweiligen Auslieferungsbedingungen berücksichtigen. Original FrameRift code and documentation use the [MIT license](../LICENSE); dependencies retain their own licenses.
+A full license inventory will accompany distribution, and toolkit changes must account for their distribution terms. Original FrameRift code and documentation use [AGPL-3.0-or-later](../LICENSE). The root [NOTICE](../NOTICE) requires preservation of FrameRift attribution and its origin link under section 7(b). Dependencies retain their own licenses: AnyPS5 remains GPL-2.0-only and runs separately; VTE is LGPL-3.0-or-later, which prevents licensing the VTE-linked FrameRift build as GPL-2.0-only. Third-party artwork and trademarks retain their respective rights.
 
-## Primärquellen
+See [VTE license metadata](https://gnome.pages.gitlab.gnome.org/vte/gtk4/index.html) and [GNU license compatibility guidance](https://www.gnu.org/licenses/license-list.html#LGPLv3).
 
-- [GTK4-Dokumentation](https://docs.gtk.org/gtk4/) und [GTK unter Windows](https://www.gtk.org/docs/installations/windows)
-- [libadwaita-Dokumentation](https://gnome.pages.gitlab.gnome.org/libadwaita/doc/main/)
-- [GIO-Dokumentation](https://docs.gtk.org/gio/)
+## Primary sources
+
+- [GTK4 documentation](https://docs.gtk.org/gtk4/) and [GTK on Windows](https://www.gtk.org/docs/installations/windows)
+- [libadwaita documentation](https://gnome.pages.gitlab.gnome.org/libadwaita/doc/main/)
+- [GIO documentation](https://docs.gtk.org/gio/)
 - [Qt Quick](https://doc.qt.io/qt-6/qtquick-index.html)
-- [CMake](https://cmake.org/cmake/help/latest/guide/tutorial/index.html) und [Ninja](https://ninja-build.org/)
+- [CMake](https://cmake.org/cmake/help/latest/guide/tutorial/index.html) and [Ninja](https://ninja-build.org/)
 - [libcurl](https://curl.se/libcurl/)
 - [JSON-GLib](https://gnome.pages.gitlab.gnome.org/json-glib/)
-- [SQLite als Anwendungsformat](https://www.sqlite.org/appfileformat.html)
+- [SQLite as an application file format](https://www.sqlite.org/appfileformat.html)
 - [spdlog](https://github.com/gabime/spdlog)
 - [zstd](https://github.com/facebook/zstd)
 - [Tracy](https://github.com/wolfpld/tracy)

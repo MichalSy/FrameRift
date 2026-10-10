@@ -1,120 +1,127 @@
-# Profiling und Frame-Analyse
+<!--
+SPDX-License-Identifier: AGPL-3.0-or-later
+Copyright (C) 2026 Michal Sytko and FrameRift contributors
+Original project: https://github.com/MichalSy/FrameRift
+Additional attribution terms: see NOTICE in the repository root.
+-->
 
-FrameRift soll Spielen und technische Analyse in einer nativen Oberfläche verbinden: eine laufende Spielsitzung, verständliche Timingkurven und eine Profiler-Ansicht für die vorhandenen AnyPS5-Diagnosen. Die Oberfläche und ihre Telemetrieschnittstelle sind geplant, noch nicht implementiert.
+# Profiling and frame analysis
 
-Bestätigte Angaben zu AnyPS5 beziehen sich auf [Upstream `197ffac97203d715a258a28b432fa2eedbf8be6f`](https://github.com/boykopovar/AnyPS5/tree/197ffac97203d715a258a28b432fa2eedbf8be6f). Dieser Quellenstand ist kein Laufzeit-Benchmark von FrameRift. Siehe [AnyPS5-Integration](anyps5-integration.md), [Controller und Eingaben](controller-input.md) und [Projektübersicht](../README.md).
+The development Profiler tab shows live console output and the status of an externally launched game; it is not yet part of committed `main`. Its output-only VTE terminal receives merged stdout/stderr directly, interprets terminal colors and progress updates, and retains 5000 scrollback lines. The runtime also writes the complete raw session log; display-only LF-to-CRLF normalization leaves that file unchanged. There is no shell, PTY or file polling. Disable Follow output and scroll up to inspect earlier output; the Copy button, Ctrl+C or Ctrl+Shift+C copies selected text. Logs remain visible after process exit and the terminal clears for the next session. Timing charts, frame analysis and structured telemetry are planned.
 
-## Bestätigte vorhandene Messquellen
+Confirmed AnyPS5 details refer to [upstream `197ffac97203d715a258a28b432fa2eedbf8be6f`](https://github.com/boykopovar/AnyPS5/tree/197ffac97203d715a258a28b432fa2eedbf8be6f). This source snapshot is not a FrameRift runtime benchmark. See [AnyPS5 integration](anyps5-integration.md), [Controller and input](controller-input.md) and the [project overview](../README.md).
 
-AnyPS5 enthält bereits Instrumentierung. FrameRift muss deshalb zwischen dem Anzeigen vorhandener Daten und einer neuen Messschnittstelle unterscheiden.
+## Confirmed measurement sources
 
-| Quelle | Aktivierung im betrachteten AnyPS5-Stand | Vorhandene Ausgabe | Bedeutung für FrameRift |
-|---|---|---|---|
-| Frame-Timing | Buildoption `APS5_ENABLE_TIMING_LOG=ON`, standardmäßig aus. | `frame-timing.log`. | Grundlage für einen ersten Dateiimport und Timingkurven. |
-| Draw-/Treiberprofil | Umgebungsvariable `APS5_PROFILE_DRAW` vorhanden. | Diagnosen und Zähler, überwiegend über den Profilausgabepfad nach `stderr`. | Grundlage für eine Logansicht und ausgewählte Statistiken. |
-| GPU-Timing | Umgebungsvariable `APS5_PROFILE_GPU` vorhanden. | Vulkan-Timestamp-Auswertung, `[gputime]`-Aggregate. | Grundlage für GPU-Programm-/Klassen-Hotspots. |
-| Allgemeine Diagnosen | Je nach Laufzeitpfad und Einstellungen. | Standard-/Fehlerausgabe, Fehler und Exitstatus. | Fehlersuche und zeitliche Einordnung einer Sitzung. |
+AnyPS5 already contains instrumentation. FrameRift must distinguish displaying existing data from introducing a new measurement interface.
 
-Die beiden Profilvariablen werden in den betrachteten Pfaden auf **Vorhandensein** geprüft. Eine auf `0` gesetzte Variable ist dort weiterhin vorhanden. FrameRift soll beim Deaktivieren die Variable entfernen, statt pauschal den String `0` zu setzen. Quellen: [Buildoption](https://github.com/boykopovar/AnyPS5/blob/197ffac97203d715a258a28b432fa2eedbf8be6f/CMakeLists.txt#L26), [Draw-Aktivierung](https://github.com/boykopovar/AnyPS5/blob/197ffac97203d715a258a28b432fa2eedbf8be6f/core/libs/prx/libSceAgcDriver/Graphics/src/Recorder.cpp#L38), [GPU-Aktivierung](https://github.com/boykopovar/AnyPS5/blob/197ffac97203d715a258a28b432fa2eedbf8be6f/core/libs/prx/libSceAgcDriver/Graphics/src/Recorder.cpp#L1790).
+| Source | Activation in the examined AnyPS5 version | Existing output | Potential use in FrameRift |
+| --- | --- | --- | --- |
+| Frame timing | Build option `APS5_ENABLE_TIMING_LOG=ON`, disabled by default | `frame-timing.log` | Basis for an initial file import and timing charts |
+| Draw/driver profiling | Presence of environment variable `APS5_PROFILE_DRAW` | Diagnostics and counters, mainly through the profiling output path to `stderr` | Basis for a log view and selected statistics |
+| GPU timing | Presence of environment variable `APS5_PROFILE_GPU` | Vulkan timestamp results and `[gputime]` aggregates | Basis for GPU program and command-class hotspots |
+| General diagnostics | Runtime path and settings | stdout/stderr, errors and exit status | Troubleshooting and placing events within a session |
 
-Das Vorhandensein des Codes beweist nicht, dass jeder ausgelieferte Bibliothekssatz mit Frame-Timing gebaut wurde. Die geplante Oberfläche muss Fähigkeiten einer konkreten Sitzung erkennen und fehlende Messquellen als nicht verfügbar anzeigen.
+Both profiling variables are checked for **presence** in the examined paths. A variable set to `0` remains present. FrameRift should remove the variable when disabling profiling rather than setting it to the string `0`. Sources: [Build option](https://github.com/boykopovar/AnyPS5/blob/197ffac97203d715a258a28b432fa2eedbf8be6f/CMakeLists.txt#L26), [Draw activation](https://github.com/boykopovar/AnyPS5/blob/197ffac97203d715a258a28b432fa2eedbf8be6f/core/libs/prx/libSceAgcDriver/Graphics/src/Recorder.cpp#L38), [GPU activation](https://github.com/boykopovar/AnyPS5/blob/197ffac97203d715a258a28b432fa2eedbf8be6f/core/libs/prx/libSceAgcDriver/Graphics/src/Recorder.cpp#L1790).
 
-## Vorhandenes Frame-Timingformat
+The code's presence does not prove that every distributed runtime library set includes frame timing. The planned UI must detect the capabilities of a specific session and mark missing measurement sources as unavailable.
 
-`PerformanceTimer.hpp` erfasst unter anderem:
+## Existing frame-timing format
 
-- Frame-ID, zugehörigen Submission-Bereich, Flip-Submission und Packet-Offset.
-- Videoausgabe-Handle, Buffer-Index und Flip-Argument.
-- Zeitpunkte von erster Submission, erster Ausführung, Flip-Packet und Flip-Abschluss.
-- Abstände zwischen diesen Zeitpunkten und das Intervall zwischen Flip-Abschlüssen.
-- Worker-Zeit, zugeordnete und nicht zugeordnete Worker-Zeit.
-- GPU-Busy-/Gap-Werte, Batch-Zähler, Packet-Anzahl und einen langsamen Packet-Eintrag.
-- Phasenmetriken als Anzahl, Gesamtdauer, Maximaldauer und gegebenenfalls Bytes.
+`PerformanceTimer.hpp` captures fields including:
 
-Der Header beschreibt Metriken ausdrücklich als inklusive Werte. Hintergrundmetriken werden außerdem als seit dem vorherigen Flip abgeschlossene Arbeit zusammengefasst. Quelle: [Capture und Metrikformat](https://github.com/boykopovar/AnyPS5/blob/197ffac97203d715a258a28b432fa2eedbf8be6f/core/libs/prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp#L154).
+- Frame ID, associated submission range, flip submission and packet offset.
+- Video-output handle, buffer index and flip argument.
+- Timestamps for first submission, first execution, flip packet and flip completion.
+- Durations between those timestamps and the interval between flip completions.
+- Worker time, attributed and unattributed worker time.
+- GPU busy/gap values, batch counters, packet count and a slow-packet entry.
+- Phase metrics as count, total duration, maximum duration and, where applicable, bytes.
 
-Die Present-Schleife ermittelt das Intervall zwischen aufeinanderfolgenden Flip-Abschlüssen und gibt den Datensatz an den Timing-Logger weiter. Der Logger schreibt asynchron in eine gepufferte Datei und leert den Dateipuffer periodisch. Eine Dateiüberwachung kann deshalb hinter dem aktuellen Spielzustand liegen. Quellen: [Present-Schleife](https://github.com/boykopovar/AnyPS5/blob/197ffac97203d715a258a28b432fa2eedbf8be6f/core/libs/prx/libSceVideoOut/src/VideoOutDriver.cpp#L587), [Timing-Logger](https://github.com/boykopovar/AnyPS5/blob/197ffac97203d715a258a28b432fa2eedbf8be6f/core/libs/prx/libSceVideoOut/include/FrameTimingLog.hpp#L18).
+The header explicitly describes metrics as inclusive. Background metrics also summarize work completed since the preceding flip. Source: [Capture and metric format](https://github.com/boykopovar/AnyPS5/blob/197ffac97203d715a258a28b432fa2eedbf8be6f/core/libs/prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp#L154).
 
-## FPS und Frame-Time richtig benennen
+The present loop determines the interval between consecutive flip completions and passes the record to the timing logger. The logger writes asynchronously to a buffered file and flushes periodically. File monitoring can therefore lag behind the current game state. Sources: [Present loop](https://github.com/boykopovar/AnyPS5/blob/197ffac97203d715a258a28b432fa2eedbf8be6f/core/libs/prx/libSceVideoOut/src/VideoOutDriver.cpp#L587), [Timing logger](https://github.com/boykopovar/AnyPS5/blob/197ffac97203d715a258a28b432fa2eedbf8be6f/core/libs/prx/libSceVideoOut/include/FrameTimingLog.hpp#L18).
 
-Der Datensatz enthält `endpoint=flip_complete` und `display_confirmed=0`. Das ist eine explizite Grenze: Der Messpunkt bestätigt nicht, wann das Bild tatsächlich auf dem Monitor angezeigt wurde. FrameRift soll deshalb zunächst **Flip-Intervall** und **geschätzte Flip-Rate** anzeigen, mit dem Messpunkt im Tooltip oder in den Messdetails. Quelle: [Kennzeichnung des Endpunkts](https://github.com/boykopovar/AnyPS5/blob/197ffac97203d715a258a28b432fa2eedbf8be6f/core/libs/prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp#L159).
+## Naming FPS and frame time accurately
 
-Für ein gültiges positives Intervall ist eine einfache abgeleitete Rate `1000 / flip_interval_ms`. Für eine Übersicht ist die Rate über ein Zeitfenster aussagekräftiger: Anzahl gültiger Intervalle geteilt durch ihre gesamte Dauer. Diese Berechnungen sind geplante Auswertungen von FrameRift. Sie messen weder automatisch neue Spielbilder noch die tatsächliche Monitor-FPS, Displaylatenz oder Eingabe-zu-Bild-Latenz.
+The record contains `endpoint=flip_complete` and `display_confirmed=0`. This is an explicit limit: the measurement does not confirm when the image appeared on the monitor. FrameRift should initially display **flip interval** and **estimated flip rate**, with the measurement point explained in a tooltip or details. Source: [Endpoint labeling](https://github.com/boykopovar/AnyPS5/blob/197ffac97203d715a258a28b432fa2eedbf8be6f/core/libs/prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp#L159).
 
-Fehlende Intervalle, der erste Frame einer Sitzung, unvollständige Daten und verworfene Messwerte sollen als Lücken erkennbar bleiben. Ein fehlender Wert wird nicht als `0 ms` und nicht als unendliche FPS dargestellt. Wiederholte Präsentationen und mehrere Ausgabe-Handles müssen getrennt bewertet werden.
+For a valid positive interval, a simple derived rate is `1000 / flip_interval_ms`. A rate over a time window is more useful for an overview: divide the number of valid intervals by their total duration. These are planned FrameRift calculations. They do not automatically measure new game images, actual monitor FPS, display latency or input-to-image latency.
 
-## CPU-Messgrenzen
+Missing intervals, a session's first frame, incomplete data and discarded measurements should remain visible as gaps. A missing value must not appear as `0 ms` or infinite FPS. Repeated presentations and multiple output handles need separate evaluation.
 
-Die vorhandenen CPU-Timings verwenden `std::chrono::steady_clock`. Sie messen verstrichene Zeit in instrumentierten Phasen. Solche Zeit kann Arbeit, Wartezeit, Synchronisation oder Unterbrechungen enthalten. Sie ist kein vollständiges CPU-Samplingprofil aller Spielthreads. Quelle: [Clock und Metrikstruktur](https://github.com/boykopovar/AnyPS5/blob/197ffac97203d715a258a28b432fa2eedbf8be6f/core/libs/prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp#L20).
+## CPU measurement limits
 
-Inklusive Phasen können sich verschachteln oder überlappen. FrameRift darf sie nicht ohne Prüfung zu einer vermeintlichen Gesamt-CPU-Framezeit addieren. Hintergrundarbeit, die zwischen zwei Flips beendet wurde, ist außerdem nicht zwangsläufig kausal nur einem dieser Frames zuzuordnen.
+Existing CPU timings use `std::chrono::steady_clock` to measure elapsed time in instrumented phases. This can include work, waiting, synchronization or interruptions. It is not a complete CPU sampling profile of all game threads. Source: [Clock and metric structure](https://github.com/boykopovar/AnyPS5/blob/197ffac97203d715a258a28b432fa2eedbf8be6f/core/libs/prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp#L20).
 
-Ein späterer Prozessmonitor könnte Betriebssystemwerte wie CPU-Auslastung und Speicherverbrauch ergänzen. Diese würden als eigene Messquelle mit ihrem Abtastintervall gekennzeichnet. CPU-Auslastung des gesamten Spielprozesses, Kosten einer instrumentierten Treiberphase und CPU-Zeit eines bestimmten Spielthreads sind unterschiedliche Größen.
+Inclusive phases may nest or overlap. FrameRift must not add them into an apparent total CPU frame time without checking their relationships. Background work completed between two flips is not necessarily attributable to just one of those frames.
 
-## Vorhandenes GPU-Profiling und seine Grenzen
+A later process monitor could add operating-system measurements such as CPU utilization and memory use. These would be labeled as a separate source with their sampling interval. Whole-process CPU utilization, the cost of an instrumented driver phase and the CPU time of a particular game thread are different quantities.
 
-Der Recorder erzeugt Vulkan-Timestamp-Query-Pools und setzt Anfangs-/Endmarken an instrumentierten Bereichen. Die Ausgabe aggregiert GPU-Zeiten nach Programm und Befehlsklasse über ungefähr zehn Sekunden. Sie enthält Batch-Spannen, abgedeckte Bereiche, nicht zugeordnete Zeit und einen Zähler für wegen des Bereichslimits verworfene Messungen. Die Hotspot-Ausgabe zeigt eine begrenzte Liste der teuersten Programme. Quellen: [Query-Erzeugung und Marken](https://github.com/boykopovar/AnyPS5/blob/197ffac97203d715a258a28b432fa2eedbf8be6f/core/libs/prx/libSceAgcDriver/Graphics/src/Recorder.cpp#L1880), [Auswertung und Aggregate](https://github.com/boykopovar/AnyPS5/blob/197ffac97203d715a258a28b432fa2eedbf8be6f/core/libs/prx/libSceAgcDriver/Graphics/src/Recorder.cpp#L2333).
+## Existing GPU profiling and its limits
 
-Daraus kann FrameRift eine GPU-Hotspot-Tabelle aufbauen. Die vorhandenen Aggregate sind jedoch keine bereits verfügbare vollständige GPU-Timeline pro Frame. Programm-Adressen sind keine automatisch aufgelösten Shadernamen. Instrumentierte GPU-Dauer ist außerdem keine allgemeine GPU-Auslastung, keine Temperatur und kein VRAM-Belegungswert.
+The recorder creates Vulkan timestamp query pools and places start/end markers around instrumented regions. Output aggregates GPU times by program and command class over roughly ten seconds. It includes batch spans, covered ranges, unattributed time and a counter for measurements dropped at the range limit. Hotspot output lists a limited number of the most expensive programs. Sources: [Query creation and markers](https://github.com/boykopovar/AnyPS5/blob/197ffac97203d715a258a28b432fa2eedbf8be6f/core/libs/prx/libSceAgcDriver/Graphics/src/Recorder.cpp#L1880), [Evaluation and aggregates](https://github.com/boykopovar/AnyPS5/blob/197ffac97203d715a258a28b432fa2eedbf8be6f/core/libs/prx/libSceAgcDriver/Graphics/src/Recorder.cpp#L2333).
 
-Vulkan-Queries liefern Ergebnisse asynchron. Verfügbarkeit, Queue-Unterstützung, Timestamp-Auflösung und Abfragekosten müssen für die tatsächliche GPU geprüft werden. Eine gemeinsame CPU-/GPU-Zeitleiste benötigt eine definierte Zuordnung ihrer Zeitdomänen; rohe GPU-Ticks und Hostzeit dürfen nicht einfach gleichgesetzt werden. Diese Erweiterung ist offen. Quelle: [Vulkan: Queries und Timestamp Queries](https://docs.vulkan.org/spec/latest/chapters/queries.html#queries-timestamps).
+FrameRift could build a GPU hotspot table from this output. Existing aggregates do not provide a complete GPU timeline for each frame. Program addresses are not automatically resolved shader names. Instrumented GPU duration is not overall GPU utilization, temperature or VRAM usage.
 
-GPU-Ergebnisse können erst nach einem späteren Flip vorliegen. Der vorhandene Timingcode beschreibt GPU-Busy-/Gap-Daten zu bereits abgeschlossenen Batches; das ist keine Zusage, dass jeder Wert ausschließlich den gerade angezeigten Frame betrifft. Quelle: [Zuordnung abgeschlossener Batches](https://github.com/boykopovar/AnyPS5/blob/197ffac97203d715a258a28b432fa2eedbf8be6f/core/libs/prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp#L145).
+Vulkan queries return results asynchronously. Availability, queue support, timestamp resolution and query cost must be checked on the actual GPU. A shared CPU/GPU timeline needs a defined mapping between time domains; raw GPU ticks and host time cannot simply be equated. This extension remains open. Source: [Vulkan queries and timestamp queries](https://docs.vulkan.org/spec/latest/chapters/queries.html#queries-timestamps).
 
-## Geplante erste Profiler-Ansicht
+GPU results may become available only after a later flip. The existing timing code describes GPU busy/gap data for completed batches; it does not guarantee that every value belongs exclusively to the currently displayed frame. Source: [Completed-batch attribution](https://github.com/boykopovar/AnyPS5/blob/197ffac97203d715a258a28b432fa2eedbf8be6f/core/libs/prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp#L145).
 
-Ein erster Funktionsumfang kann vorhandene Daten nutzen, ohne einen vollständigen Debugger vorauszusetzen:
+## Planned measurement view
 
-1. Spielsitzung mit Prozessstatus und Live-Logs.
-2. Import oder laufende Beobachtung der Timingdatei eines passenden Bibliothekssatzes.
-3. Kurve der Flip-Intervalle und nachvollziehbar berechnete Statistiken.
-4. Details eines ausgewählten Frame-Timingdatensatzes.
-5. Ausgewählte Draw-/GPU-Aggregate mit Messzeitfenster und Quellenkennzeichnung.
-6. Export einer Sitzung mit Metadaten, Rohdaten und aktivierten Messoptionen.
+An initial measurement view could use existing data without requiring a full debugger:
 
-Das Pausieren der Kurvenanzeige soll zunächst nur die FrameRift-Ansicht einfrieren. Es bedeutet nicht, dass der Spielprozess oder die GPU angehalten wird. Breakpoints, Einzelschritte, Callstacks, Speicherinspektion und Shader-Debugging erfordern weitere Debugger- oder Capture-Integration. Sie sind keine vorhandenen Fähigkeiten eines Fensters mit dem Titel „Profiler“.
+1. Game session with process status and live logs; available in the development console.
+2. Import or ongoing monitoring of the timing file from a compatible library set.
+3. Flip-interval chart and statistics with explicit calculations.
+4. Details of a selected frame-timing record.
+5. Selected draw/GPU aggregates with their measurement window and source.
+6. Session export with metadata, raw data and enabled measurement options.
 
-## Geplante strukturierte Telemetrie
+Pausing charts should initially freeze only the FrameRift view. It does not stop the game process or GPU. Breakpoints, single-stepping, call stacks, memory inspection and shader debugging require further debugger or capture integration. A window titled "Profiler" does not provide those capabilities by itself.
 
-Langfristig ist eine ausdrückliche optionale Telemetrieschnittstelle sinnvoller als das dauerhafte Interpretieren menschlich lesbarer Logzeilen. Sie müsste an geeigneten AnyPS5-Messpunkten Daten erzeugen; FrameRift alleine kann interne Treiberphasen nicht zuverlässig aus einem fremden Fenster auslesen.
+## Planned structured telemetry
 
-Die folgenden Felder sind ein **Entwurf**, kein bereits unterstütztes AnyPS5-Protokoll:
+In the longer term, an explicit optional telemetry interface is preferable to continually interpreting human-readable log lines. It would need to produce data at suitable AnyPS5 measurement points; FrameRift alone cannot reliably read internal driver phases from another process's window.
 
-| Feldgruppe | Geplante Inhalte |
-|---|---|
-| Protokoll | Version, Datensatztyp, vorhandene Fähigkeiten. |
-| Sitzung | FrameRift-Sitzungs-ID, Prozessidentität, Titel-ID, Artefakt-/Bibliotheksversion. |
-| Zuordnung | Messquelle, Frame-ID, Ausgabe-Handle, Submission-/Batch-ID, Queue-ID soweit verfügbar. |
-| Zeit | Definierter Zeitursprung, Zeiteinheit, Zeitdomäne, Beginn/Ende oder Intervall. |
-| Qualität | Vollständigkeit, Drop-Zähler, Messauflösung, gültig/noch nicht verfügbar. |
-| Metrik | Stabiler Name, Einheit, inklusive/exklusive Semantik, Anzahl, Summe, Maximum. |
+The following fields are a **proposal**, not an existing AnyPS5 protocol:
 
-Eine Frame-ID gilt innerhalb einer eindeutig benannten Sitzung und Messquelle. Sie darf nicht als global eindeutige ID zwischen Neustarts behandelt werden. Spät eintreffende GPU-Daten sollen die ursprüngliche Submission-/Batch-Zuordnung behalten; die Empfangszeit im Launcher ist keine Frame-Zuordnung.
+| Field group | Proposed contents |
+| --- | --- |
+| Protocol | Version, record type, available capabilities |
+| Session | FrameRift session ID, process identity, title ID, artifact/library version |
+| Correlation | Measurement source, frame ID, output handle, submission/batch ID, queue ID where available |
+| Time | Defined time origin, unit, time domain, start/end or interval |
+| Quality | Completeness, drop counter, measurement resolution, valid/not yet available |
+| Metric | Stable name, unit, inclusive/exclusive semantics, count, sum, maximum |
 
-Für den Transport sind ein lokaler Socket, eine Windows Named Pipe oder ein begrenzter Shared-Memory-Kanal zu untersuchen. Die Auswahl ist offen. Der erste Protokollentwurf soll möglichst wenig Daten und eine klare Versions-/Fähigkeitsaushandlung enthalten. Diagnosetext, Logereignisse und präzise Messdaten werden im Datenmodell getrennt.
+A frame ID is valid within a uniquely named session and measurement source. It is not globally unique across restarts. Late GPU data should retain its original submission/batch correlation; arrival time in the launcher is not frame attribution.
 
-## Overhead und Backpressure
+A local socket, Windows named pipe or bounded shared-memory channel should be investigated for transport. The choice remains open. The first protocol proposal should contain as little data as necessary and clear version/capability negotiation. The data model separates diagnostic text, log events and precise measurements.
 
-Instrumentierung kann Laufzeiten verändern. Zusätzliche Clock-Abfragen, Locks, Formatierung, Speicherallokationen, Query-Pools und Datenübertragung gehören zum Messaufwand. FrameRift soll diesen Aufwand messen und Messmodi eindeutig kennzeichnen, ohne vorab einen unbelegten Prozentwert zu versprechen.
+## Overhead and backpressure
 
-Die vorhandenen Ausgabepfade haben unterschiedliche Überlastregeln:
+Instrumentation can change runtimes. Extra clock queries, locks, formatting, allocations, query pools and data transfer all contribute to measurement overhead. FrameRift should measure this overhead and label measurement modes clearly without promising an unsupported percentage in advance.
 
-- `FrameTimingLog` begrenzt seine Queue auf 256 Reports und wirft bei voller Queue. Die Present-Schleife behandelt Timingfehler als Fehler und kann den Prozess beenden.
-- `ProfileOutput` besitzt einen begrenzten Puffer, verwirft bei Kapazitätsmangel Chunks und berichtet die Drops. Schreibfehler können trotzdem als Fehler weitergegeben werden.
+Existing output paths have different overload policies:
 
-Quellen: [Timing-Queue](https://github.com/boykopovar/AnyPS5/blob/197ffac97203d715a258a28b432fa2eedbf8be6f/core/libs/prx/libSceVideoOut/include/FrameTimingLog.hpp#L36), [Timing-Fehlerbehandlung](https://github.com/boykopovar/AnyPS5/blob/197ffac97203d715a258a28b432fa2eedbf8be6f/core/libs/prx/libSceVideoOut/src/VideoOutDriver.cpp#L619), [ProfileOutput](https://github.com/boykopovar/AnyPS5/blob/197ffac97203d715a258a28b432fa2eedbf8be6f/core/libs/prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp#L41).
+- `FrameTimingLog` limits its queue to 256 reports and throws when it is full. The present loop treats timing errors as errors and may terminate the process.
+- `ProfileOutput` has a bounded buffer, drops chunks when capacity is insufficient and reports those drops. Write failures can still propagate as errors.
 
-Für die geplante IPC-Verbindung ist ein begrenzter Producer-Puffer mit sichtbaren Drop-Zählern vorgesehen. Ein langsamer oder geschlossener Launcher darf das Spiel nicht dauerhaft blockieren. Datenformatierung und UI-Aktualisierung sollen außerhalb der heißen Render-/Treiberpfade liegen. Detaillierte Messung soll gezielt aktivierbar sein; eine Bibliotheksansicht benötigt keine permanente GPU-Instrumentierung.
+Sources: [Timing queue](https://github.com/boykopovar/AnyPS5/blob/197ffac97203d715a258a28b432fa2eedbf8be6f/core/libs/prx/libSceVideoOut/include/FrameTimingLog.hpp#L36), [Timing error handling](https://github.com/boykopovar/AnyPS5/blob/197ffac97203d715a258a28b432fa2eedbf8be6f/core/libs/prx/libSceVideoOut/src/VideoOutDriver.cpp#L619), [ProfileOutput](https://github.com/boykopovar/AnyPS5/blob/197ffac97203d715a258a28b432fa2eedbf8be6f/core/libs/prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp#L41).
 
-## Offene Spikes und spätere Validierung
+The planned IPC connection should use a bounded producer buffer with visible drop counters. A slow or closed launcher must not block the game indefinitely. Data formatting and UI updates should stay outside hot rendering and driver paths. Detailed measurements should be enabled deliberately; the library view does not require permanent GPU instrumentation.
 
-| Spike | Zu klärende Frage |
-|---|---|
-| Timingimport | Können Version, Einheiten, teilweise geschriebene Zeilen und Datenlücken zuverlässig erkannt werden? |
-| Frame-Korrelation | Wie werden mehrere Ausgaben, Queue-Arbeit und spät abgeschlossene Batches zugeordnet? |
-| GPU-Timeline | Welche neuen Ereignisse und Zeitkalibrierung sind zusätzlich zu den Aggregaten erforderlich? |
-| IPC | Welcher lokale Transport verursacht wenig Aufwand und bleibt bei Verbindungsabbruch robust? |
-| Overhead | Wie unterscheiden sich Spiel allein, Logs, Frame-Timing, GPU-Profiling und FrameRift-Anzeige? |
-| UI | Bleiben Navigation und Kurven flüssig, wenn viele Messwerte oder Logs eintreffen? |
+## Open experiments and later validation
 
-Spätere Tests sollen mathematische Auswertungen mit bekannten Datensätzen, fehlende/ungültige Werte, Protokollversionen, Überlast, Verbindungsverlust und Prozessneustarts abdecken. Integrationsmessungen sollen identische Spiel-/Treiber-/Bibliotheksbedingungen und mehrere Durchläufe verwenden. Ein Ergebnis aus einem Designbild ist kein Benchmark und keine bestätigte Spielkompatibilität.
+| Experiment | Question to resolve |
+| --- | --- |
+| Timing import | Can versions, units, partially written lines and data gaps be detected reliably? |
+| Frame correlation | How are multiple outputs, queued work and late batches attributed? |
+| GPU timeline | Which new events and time calibration are needed beyond the existing aggregates? |
+| IPC | Which local transport has low overhead and remains robust when disconnected? |
+| Overhead | How do game-only execution, logs, frame timing, GPU profiling and FrameRift display compare? |
+| UI | Do navigation and charts remain responsive under heavy measurement or log traffic? |
+
+Later checks should cover calculations against known datasets, missing/invalid values, protocol versions, overload, connection loss and process restarts. Integration measurements should use identical game/driver/library conditions and multiple runs. A design image is neither a benchmark nor confirmation of game compatibility.

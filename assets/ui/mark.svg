@@ -1,3 +1,10 @@
+<!--
+SPDX-License-Identifier: AGPL-3.0-or-later
+Copyright (C) 2026 Michal Sytko and FrameRift contributors
+Original project: https://github.com/MichalSy/FrameRift
+Additional attribution terms: see NOTICE in the repository root.
+-->
+
 <svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 40 40">
   <path fill="#00d4ef" d="M10 5h28l-5 8H16l-2 5h17l-5 8H11L6 36H0L10 5Z"/>
   <path fill="#049acb" d="M14 18h17l-5 8H11z"/>

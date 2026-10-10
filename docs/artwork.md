@@ -1,151 +1,158 @@
-# Artwork, SteamGridDB und Animationen
+<!--
+SPDX-License-Identifier: AGPL-3.0-or-later
+Copyright (C) 2026 Michal Sytko and FrameRift contributors
+Original project: https://github.com/MichalSy/FrameRift
+Additional attribution terms: see NOTICE in the repository root.
+-->
 
-[Zur Projektübersicht](../README.md) · [Toolkit und Plattformen](toolkit-and-platforms.md) · [Spielintegration](game-window-integration.md)
+# Artwork, SteamGridDB and animations
 
-## Status und Produktentscheidung
+[Project overview](../README.md) · [Toolkit and platforms](toolkit-and-platforms.md) · [Game integration](game-window-integration.md)
 
-**SteamGridDB ist die primäre Artwork-Quelle von FrameRift.** Die geplante Bibliothek verwendet Portrait-Cover in breiten Reihen und eine große Hero-Fläche für das ausgewählte Spiel. Ein separat verfügbares Titel-Logo kann auf dieser Fläche platziert werden. Animierte Hero-Bilder sollen als bewusst unterstütztes Format geplant werden.
+## Status and product direction
 
-Dieses Dokument definiert den geplanten Datenfluss. Es gibt noch keinen implementierten API-Client, Cache, Decoder oder Downloadmanager. Die Bibliothek startet zunächst mit lokalen Einträgen; Artwork lädt die Darstellung auf, bestimmt aber nicht die Spielbarkeit.
+**SteamGridDB is FrameRift's primary artwork source.** The library uses portrait covers and a large hero area with a separate title logo for the selected game. The API client and local SQLite/file cache are implemented on `main`; the API key comes from the process environment.
 
-## Quellenkategorien
+The development work adds Settings with desktop keyring storage and animated WebP heroes, with static images as a fallback. An explicit library refresh also searches for animations when a hero already exists. In that development implementation, `src/ui/hero.cpp` uses libwebpdemux for timed banner playback, pauses when the library is hidden and respects GTK's animation setting. The image fills the header width proportionally, with vertically centered cropping and a bottom gradient. The remaining sections describe requirements and further planned extensions. Artwork does not determine whether a game is playable.
 
-SteamGridDB unterscheidet **Grids**, **Heroes**, **Logos** und **Icons**. Die API dokumentiert unter anderem Portrait-Grids mit 600×900 und Hero-Formate wie 1920×620. Diese Kategorien werden im FrameRift-Modell getrennt gespeichert. Ein quadratisches Icon wird nicht allein durch Skalieren zu einem Portrait-Cover. [SteamGridDB API](https://www.steamgriddb.com/api/v2)
+## Asset categories
 
-| FrameRift-Verwendung | SGDB-Kategorie | Vorgeschlagene Behandlung |
+SteamGridDB distinguishes **Grids**, **Heroes**, **Logos** and **Icons**. Its API documents portrait grids such as 600×900 and hero formats such as 1920×620. FrameRift stores these categories separately. Scaling a square icon alone does not make it a portrait cover. [SteamGridDB API](https://www.steamgriddb.com/api/v2)
+
+| FrameRift use | SGDB category | Proposed handling |
 |---|---|---|
-| Bibliothekskarte | Grid | Portrait bevorzugen; Seitenverhältnis erhalten |
-| Ausgewähltes Spiel / breite Bannerfläche | Hero | Breite Grafik; kontrollierter Ausschnitt |
-| Titel auf der Hero-Fläche | Logo | Transparenz und Kontrast prüfen |
-| Kleine Listen-/Statusdarstellung | Icon | Passende kleine Auflösung verwenden |
+| Library card | Grid | Prefer portrait; preserve aspect ratio |
+| Selected game / wide banner | Hero | Wide artwork with controlled cropping |
+| Title in the hero area | Logo | Check transparency and contrast |
+| Small list/status display | Icon | Use an appropriate small resolution |
 
-Ein Cover mit eingezeichnetem Logo und ein separates transparentes Logo sind unterschiedliche Ressourcen. Für die Hero-Fläche soll die Datenstruktur beide unabhängig erlauben, damit kein Titel doppelt über einem bereits beschrifteten Hintergrund erscheint.
+A cover with an embedded logo and a separate transparent logo are different resources. The hero data model should allow both independently to avoid displaying a title twice over an already labeled background.
 
-## Spiele sicher zuordnen
+## Reliable game matching
 
-Die API bietet Namenssuche und Zugriffe über SGDB-Spiel-IDs sowie externe Plattform-IDs. Dokumentiert sind Steam, Origin, EGS, Battle.net, Ubisoft, Flashpoint und eShop. PS5-/PPSA-IDs sind in dieser Plattformliste nicht enthalten. Für eine PS5-Bibliothek ist daher **Name suchen, Treffer prüfen und die SGDB-ID dauerhaft zuordnen** die vorgeschlagene Richtung. [Offizielle OpenAPI-Spezifikation](https://www.steamgriddb.com/static/openapi.yml)
+The API supports name searches, SGDB game IDs and external platform IDs. Documented platforms include Steam, Origin, EGS, Battle.net, Ubisoft, Flashpoint and eShop. PS5/PPSA IDs are absent from that list. For a PS5 library, the proposed approach is therefore to **search by name, verify the result and persist the SGDB ID**. [Official OpenAPI specification](https://www.steamgriddb.com/static/openapi.yml)
 
-Der Suchprozess soll nicht jeden Start erneut anhand des ersten Namenshits entscheiden. Vorgeschlagener Ablauf:
+Matching should not choose the first name result again on every launch. Proposed flow:
 
-1. Lokale Metadaten liefern einen Spielnamen und, soweit vorhanden, weitere unterscheidende Angaben.
-2. Die Suche erzeugt Kandidaten. Titelvarianten, Erscheinungsjahr, Edition und Spielserie helfen bei der Auswahl.
-3. Mehrdeutige Ergebnisse werden sichtbar als nicht bestätigte Zuordnung behandelt.
-4. Die bestätigte SGDB-Spiel-ID wird am lokalen Bibliothekseintrag gespeichert.
-5. Spätere Aktualisierungen verwenden diese Zuordnung; eine manuelle Korrektur bleibt möglich.
+1. Local metadata supplies the game title and any available distinguishing details.
+2. Search produces candidates. Title variants, release year, edition and series help select a match.
+3. Ambiguous results remain visibly unconfirmed.
+4. The confirmed SGDB game ID is stored with the local library entry.
+5. Later updates reuse that mapping; manual correction remains possible.
 
-Beispiel: **ASTRO BOT (2024)** und **ASTRO's PLAYROOM** sind unterschiedliche Bibliothekseinträge. Ein ähnlicher Name oder derselbe Charakter darf die Zuordnung nicht automatisch zusammenführen.
+For example, **ASTRO BOT (2024)** and **ASTRO's PLAYROOM** are separate library entries. A similar title or shared character must not automatically merge them.
 
-Die lokale Spielidentität bleibt eigenständig. Ein einzelner SGDB-Eintrag kann sich auf eine andere Edition oder auf mehrere Plattformfassungen beziehen. Die Artwork-Zuordnung verändert weder die lokale Startkonfiguration noch einen Kompatibilitätsstatus.
+Local game identity remains independent. One SGDB entry may describe another edition or several platform versions. Artwork matching changes neither local launch configuration nor compatibility status.
 
-## API-Zugriff
+## API access
 
-SteamGridDB verlangt für die API einen API-Key im HTTP-Header `Authorization: Bearer <token>`. Ein Schlüssel kann über die Benutzerpräferenzen erzeugt werden. Das Lesen öffentlicher Website-Einträge und ein späterer authentifizierter API-Client sind getrennte Zugriffswege. [API-Authentifizierung](https://www.steamgriddb.com/static/openapi.yml), [offizieller Client-Einstieg](https://github.com/SteamGridDB/node-steamgriddb#readme)
+SteamGridDB requires an API key in the HTTP header `Authorization: Bearer <token>`. Users can generate a key in their account preferences. Reading public website entries and using the authenticated API are separate access paths. [API authentication](https://www.steamgriddb.com/static/openapi.yml), [official client introduction](https://github.com/SteamGridDB/node-steamgriddb#readme)
 
-Für FrameRift ist vorgesehen:
+FrameRift's access requirements are:
 
-- Den persönlichen Schlüssel zur Laufzeit konfigurieren; keinen produktiven Schlüssel in das öffentliche Repository schreiben.
-- Authentifizierung nur an den dokumentierten API-Zielhost senden, nicht an beliebige Artwork-URLs.
-- Fehler wie fehlende Authentifizierung, fehlender Treffer und vorübergehende Netzwerkprobleme getrennt anzeigen.
-- Kataloganfragen bündeln, Ergebnisse zwischenspeichern und Parallelität begrenzen.
-- Bereits vorhandene Bilder weiterhin anzeigen, wenn neue Anfragen fehlschlagen.
-- Die Bibliothek und der Start lokaler Spiele bleiben auch ohne funktionierenden Artwork-Dienst bedienbar.
+- Configure the personal key at runtime; never place a production key in the public repository.
+- Send authentication only to the documented API host, never to arbitrary artwork URLs.
+- Distinguish missing authentication, missing matches and temporary network failures.
+- Batch catalog requests, cache results and limit concurrency.
+- Keep existing images visible when new requests fail.
+- Keep the library and local game launching usable without a working artwork service.
 
-Die konkrete Netzwerkbibliothek ist offen und folgt der [Toolkitentscheidung](toolkit-and-platforms.md). Asynchrones I/O und klare Abbruch-/Lebenszeitregeln sind erforderlich; eine synchron wartende UI ist nicht die Arbeitsrichtung.
+The implemented client uses libcurl outside the GTK thread, following the [toolkit direction](toolkit-and-platforms.md). Explicit cancellation and lifetime rules remain necessary.
 
-## Asset-Auswahl
+## Asset selection
 
-Die automatische Auswahl soll eine nachvollziehbare Voreinstellung liefern, aber keine dauerhafte Bindung an einen einzigen Upload erzwingen. Vorgeschlagene Prioritäten:
+Automatic selection should provide a predictable default without permanently binding a game to one upload. Proposed priority:
 
-1. Eine manuell gewählte Ressource.
-2. Eine passende lokal gecachte Ressource mit bestätigter Spielzuordnung.
-3. Ein geeignetes SteamGridDB-Asset in der gewünschten Kategorie und Größe.
-4. Ein vorhandenes lokales Spielbild oder ein neutraler Platzhalter, wenn kein passendes Asset verfügbar ist.
+1. A manually selected resource.
+2. A suitable cached resource with a confirmed game mapping.
+3. A suitable SteamGridDB asset in the requested category and size.
+4. An existing local game image or a neutral placeholder when no suitable asset exists.
 
-Scores und Kategorien sind Auswahlhilfen. Sie sind kein Nachweis einer offiziellen Herkunft oder einer freien Lizenz. Die gespeicherte Asset-ID und der ursprüngliche Eintragslink sollen eine spätere Korrektur möglich machen.
+Scores and categories help selection; they do not establish official origin or a free license. Storing the asset ID and original entry link should allow later correction.
 
-Ein fehlendes separates Logo wird nicht durch ein unsichtbares oder verzerrtes Bild ersetzt. Der Spielname kann als normale UI-Schrift erscheinen. Bei falschem Artwork soll eine einzelne Zuordnung zurückgesetzt werden können, ohne die gesamte Bibliothek oder Startkonfiguration zu löschen.
+If a separate logo is missing, display the game title as ordinary UI text rather than an invisible or distorted image. Incorrect artwork should be reset for one mapping without deleting the library or launch configuration.
 
-## Animationen: WebP ausdrücklich einplanen
+## Explicit WebP animation support
 
-Die API kennt die Filter `static` und `animated`; ohne ausdrücklichen Filter gilt `static`. Für animierte Heroes muss der Client Animation daher aktiv anfordern. SteamGridDB erklärt in seiner FAQ, dass aktuelle animierte Assets **WebP** verwenden und APNG eingestellt wurde. GIF ist keine Grundlage dieses Plans. [API](https://www.steamgriddb.com/api/v2), [SteamGridDB FAQ](https://www.steamgriddb.com/faq)
+The API supports `static` and `animated` filters; `static` is the default. The client must explicitly request animated heroes. SteamGridDB's FAQ states that current animated assets use **WebP** and that APNG was discontinued. GIF is not part of this plan. [API](https://www.steamgriddb.com/api/v2), [SteamGridDB FAQ](https://www.steamgriddb.com/faq)
 
-**Eine Datei anzeigen und ihre Animation abspielen sind zwei unterschiedliche Fähigkeiten.** Ein statischer WebP-Decoder oder ein gewöhnliches Image-Widget bestätigt keine korrekte Wiedergabe mehrerer Frames. Nachzuweisen sind Frame-Zeitpunkte, Blend-/Dispose-Verhalten, Transparenz, Schleifen und Pausieren.
+**Displaying a file and playing its animation are separate capabilities.** A static WebP decoder or ordinary image widget does not establish correct multi-frame playback. Frame timing, blending/disposal, transparency, loops and pausing need verification.
 
-Als Toolkit-unabhängiger Kandidat besitzt libwebp APIs für animierte WebP-Container und Animation-Decoding. Der geplante Decoder kann daraus zeitlich gesteuerte Bildframes erzeugen, die das ausgewählte Toolkit präsentiert. Ob ein Toolkit bereits einen passenden vollständigen Pfad liefert, ist vor einer zusätzlichen Abhängigkeit zu prüfen. [WebP Container-/Animations-API](https://developers.google.com/speed/webp/docs/container-api)
+libwebp provides toolkit-independent APIs for animated WebP containers and decoding. The development hero player uses these to produce timed frames for GTK. Windows playback remains unverified. Check whether a toolkit already provides a complete playback path before adding another dependency. [WebP container/animation API](https://developers.google.com/speed/webp/docs/container-api)
 
-### Vorgeschlagene Wiedergaberegeln
+### Proposed playback rules
 
-- Nur der sichtbare ausgewählte Hero animiert standardmäßig.
-- Verdeckte oder nicht ausgewählte Heroes pausieren; Bibliothekskarten bleiben zunächst statisch.
-- Minimieren, Verlassen der Bibliothek und Deaktivieren von Animationen stoppen unnötige Decoderarbeit.
-- Eine statische Ersatzdarstellung bleibt verfügbar, auch wenn ein animiertes Asset nicht vollständig geladen oder dekodiert ist.
-- Der Player behandelt Frame-Dauer und Schleifen explizit; er zeichnet nicht ungebremst mit einer unabhängigen Dauerschleife.
-- Für reduzierte Bewegung soll eine ruhende Variante wählbar sein.
+- Animate only the visible selected hero by default.
+- Pause hidden or unselected heroes; library cards remain static initially.
+- Minimize, leave the library or disable animations to stop unnecessary decoder work.
+- Keep a static fallback available when an animated asset is incomplete or cannot be decoded.
+- Handle frame duration and loops explicitly; avoid an unrestricted independent render loop.
+- Offer a still image for reduced motion.
 
-**Vorschlag für Messungen:** Artwork-Animationen während einer aktiven Profiler-Aufzeichnung pausieren oder standardmäßig ausblenden. So werden dekorative UI-Kosten nicht unbemerkt Teil eines Performance-Vergleichs. Dies ist eine vorgeschlagene Produktregel, noch keine fest beschlossene Automatik. Die Entscheidung wird zusammen mit den tatsächlichen Messkosten getroffen.
+**Proposal for profiling:** Pause or hide artwork animations by default during an active profiler recording, so decorative UI costs do not silently affect a performance comparison. This remains a proposed product rule. The decision depends on measured overhead.
 
-## Vorgeschlagener Cache
+## Cache extensions
 
-Ein lokaler Cache soll Offline-Nutzung, schnelle Auswahlwechsel und begrenzte Netzwerklast ermöglichen. Der Cache ist geplant; hier ist noch kein Datenbankschema verbindlich.
+The implemented local cache supports offline use and quick selection changes. The following fields and limits describe proposed extensions rather than a complete implemented schema.
 
-| Gespeicherte Angabe | Zweck |
+| Stored information | Purpose |
 |---|---|
-| Lokale Spiel-ID und bestätigte SGDB-Spiel-ID | Stabile Zuordnung |
-| Kategorie und SGDB-Asset-ID | Grid/Hero/Logo/Icon getrennt verwalten |
-| Original-URL und öffentlicher Eintragslink | Herkunft und spätere Aktualisierung |
-| Upload-/Autorangabe, soweit verfügbar | Provenienz erhalten |
-| MIME-Type, Abmessungen und Animationsstatus | Geeigneten Darstellungspfad wählen |
-| Cachegeneration und Inhaltsprüfung | Teilweise oder veraltete Dateien erkennen |
-| Manuelle Auswahl / lokale Ersatzquelle | Nutzerentscheidung erhalten |
-| Downloadzustand und letzte Fehlerklasse | Fehler nicht als gültiges Bild behandeln |
+| Local game ID and confirmed SGDB game ID | Stable mapping |
+| Category and SGDB asset ID | Manage Grid/Hero/Logo/Icon separately |
+| Original URL and public entry link | Preserve origin and support updates |
+| Upload/author details, where available | Retain provenance |
+| MIME type, dimensions and animation status | Select a suitable display path |
+| Cache generation and content validation | Detect partial or stale files |
+| Manual selection / local fallback source | Preserve user choices |
+| Download state and last error class | Avoid treating errors as valid images |
 
-Originaldatei und abgeleitete Anzeigegröße sollen getrennt sein. Ein Thumbnail ist für die schnelle Auswahl geeignet, aber kein Ersatz für ein gewünschtes hochauflösendes Hero-Bild. Das Frontend dekodiert möglichst für die tatsächlich sichtbare Auflösung.
+Keep original files separate from derived display sizes. A thumbnail helps quick selection but does not replace a requested high-resolution hero. Decode for the resolution actually visible where possible.
 
-Vorgeschlagene technische Regeln:
+Proposed technical rules:
 
-- Begrenzter Plattencache mit einer dokumentierten Verdrängungsstrategie; manuelle lokale Quellen separat erhalten.
-- Begrenzter RAM-/GPU-Cache für aktive und unmittelbar folgende Ansichten.
-- Downloads zunächst in eine temporäre Ressource schreiben und erst nach erfolgreicher Validierung übernehmen.
-- Dateiformat, Abmessungen und Speicherbedarf prüfen, bevor große Bilder vollständig aufgebaut werden.
-- Nicht sämtliche Frames aller Animationen dauerhaft dekodiert im Speicher halten.
-- Gleichzeitige Anfragen für dasselbe Asset zusammenführen.
-- Fehlende Assets zeitweise als fehlend merken, aber eine manuelle erneute Suche erlauben.
-- Eine Cachebereinigung verändert keine Bibliothekseinträge und keine Spielzuordnung.
+- Bound the disk cache with a documented eviction policy; preserve manual local sources separately.
+- Bound RAM/GPU caches for active and immediately upcoming views.
+- Download to a temporary resource and accept it only after successful validation.
+- Check format, dimensions and memory requirements before constructing large images.
+- Avoid keeping every frame of every animation permanently decoded in memory.
+- Combine concurrent requests for the same asset.
+- Cache missing assets temporarily while allowing a manual retry.
+- Cache cleanup must not change library entries or game mappings.
 
-Eine Größenordnung verdeutlicht den Bedarf: Ein dekodiertes 1920×620-Bild mit vier Bytes pro Pixel belegt ungefähr 4,5 MiB; mehrere Dutzend vollständig gespeicherte Frames können entsprechend viel RAM beanspruchen. Komprimierte Dateigröße und dekodierter Speicherbedarf sind getrennte Größen. Das Beispiel ist eine Berechnung, keine zugesagte Cachegrenze.
+For scale, a decoded 1920×620 image at four bytes per pixel uses about 4.5 MiB; several dozen fully retained frames can consume substantial RAM. Compressed file size and decoded memory use are different quantities. This is a calculation, not a promised cache limit.
 
-## Manuelle Auswahl und lokale Ersatzbilder
+## Manual selection and local fallbacks
 
-Der Nutzer soll Cover, Hero und Logo unabhängig überschreiben können. Diese Fähigkeit ist als lokale Bibliotheksfunktion geplant, nicht als SteamGridDB-Uploadworkflow.
+Users should be able to override cover, hero and logo independently. This is a planned local library feature, not a SteamGridDB upload workflow.
 
-Eine manuelle Auswahl speichert die eindeutige Ressource und ihre Herkunft. Ein neues automatisches Suchergebnis soll sie nicht still überschreiben. Für lokal ausgewählte Dateien wird entschieden, ob eine Kopie verwaltet oder die ursprüngliche Quelle referenziert wird; das Verhalten muss in der Oberfläche klar sein.
+A manual selection stores the specific resource and its origin. New automatic search results should not silently replace it. For local files, decide whether FrameRift manages a copy or references the original source, and make that behavior clear in the UI.
 
-Format- oder Decoderfehler dürfen weder die Bibliothek blockieren noch eine bestehende funktionierende Auswahl verdrängen. Ein sichtbarer Platzhalter und ein verständlicher Fehlerzustand sind dem wiederholten unbegrenzten Laden vorzuziehen.
+Format or decoder errors must neither block the library nor replace a working selection. Use a visible placeholder and clear error state instead of repeated unlimited loading.
 
-## Herkunft, Rechte und Veröffentlichung
+## Provenance, rights and publication
 
-SteamGridDB ist eine Artwork-Datenbank mit Beiträgen von Nutzern. Eine erfolgreiche API-Anfrage erteilt keine pauschale Lizenz für jedes Bild. Die Rechte am dargestellten Spiel, am Titel-Logo und an einer Bearbeitung können sich unterscheiden. Ein Kategoriebegriff wie „official“ wird nicht als allgemeine Wiederveröffentlichungserlaubnis ausgewertet. Die Nutzungsbedingungen und die Angaben am jeweiligen Asset sind separat zu beachten. [SteamGridDB Terms](https://www.steamgriddb.com/terms)
+SteamGridDB is an artwork database with user contributions. A successful API request does not grant a blanket license for every image. Rights in the game, title logo and edited image may differ. A category such as "official" is not general permission to republish. Check the terms and each asset's information separately. [SteamGridDB Terms](https://www.steamgriddb.com/terms)
 
-Für das öffentliche FrameRift-Repository ist vorgeschlagen:
+Rules for the public FrameRift repository:
 
-- Designreferenzen ausdrücklich als Konzeptbilder kennzeichnen.
-- Für reale Spielebilder den öffentlichen Originaleintrag und die Herkunft nennen.
-- Die Lizenz des FrameRift-Codes nicht auf fremdes Spielartwork übertragen.
-- Fremde Artwork-Sammlungen nicht pauschal als Bestandteil eines Release-Pakets bündeln.
-- Demo-/Testmaterial mit klarer Nutzungserlaubnis oder eigenen neutralen Beispielen getrennt führen.
+- Clearly label design references as concept images.
+- Identify the public original entry and origin of real game artwork.
+- FrameRift's [AGPL-3.0-or-later license](../LICENSE) does not cover third-party game artwork, logos or trademarks.
+- Do not bundle third-party artwork collections indiscriminately in releases.
+- Keep demo/test material with clear permission or original neutral examples separate.
 
-Eine Darstellung von ASTRO BOT oder einem anderen realen Spiel in einem Designbild ist **keine Kompatibilitätsbehauptung**. Spielbarkeit und Profiler-Fähigkeiten werden an anderer Stelle anhand tatsächlicher Integrationsnachweise beschrieben.
+Showing ASTRO BOT or another real game in a design image is **not a compatibility claim**. Playability and profiler capabilities are documented separately using actual integration evidence.
 
-## Offene Entscheidungen und Prüfpunkte
+## Open decisions and checks
 
-| Frage | Nachweis vor Implementierungsfreigabe |
+| Question | Required evidence |
 |---|---|
-| Wie wird die Spielzuordnung bestätigt? | Mehrdeutige Titel und Editionen bleiben korrigierbar |
-| Welcher Decoder spielt WebP-Animationen? | Windows und Linux zeigen Timing, Alpha und Schleifen korrekt |
-| Welche Cachegrenzen gelten? | RAM-/GPU-/Plattenverbrauch mit realistischer Bibliothek gemessen |
-| Wann pausieren Animationen? | Verdeckte UI bleibt ruhig; Messregeln bewusst beschlossen |
-| Welche lokale Persistenz wird genutzt? | Zuordnung und manuelle Auswahl über Neustarts erhalten |
-| Wie sehen Netzwerkausfälle aus? | Bibliothek und Spielstart funktionieren mit Cache/Platzhalter |
-| Welche Assets werden veröffentlicht? | Provenienz und Rechte je veröffentlichtem Material geklärt |
+| How is a game mapping confirmed? | Ambiguous titles and editions remain correctable |
+| Which decoder plays WebP animations? | Windows and Linux handle timing, alpha and loops correctly |
+| What cache limits apply? | Measure RAM/GPU/disk use with a realistic library |
+| When do animations pause? | Hidden UI is quiet; profiling rules are deliberately chosen |
+| What local persistence is used? | Mappings and manual selections survive restarts |
+| How do network failures behave? | Library and game launching work with cache/placeholders |
+| Which assets are published? | Provenance and rights are established for each item |
 
-Der spätere Artwork-Prototyp soll zunächst einen bestätigten Spieltreffer, ein Portrait-Grid, einen statischen Hero, ein transparentes Logo und einen animierten WebP-Hero kontrolliert laden. Erst danach wird die Bibliotheksbreite und automatische Auswahl erweitert.
+Further artwork validation should cover a confirmed game match, portrait grid, static hero, transparent logo and animated WebP hero before expanding library coverage and automatic selection.

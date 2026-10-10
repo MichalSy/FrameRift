@@ -1,126 +1,139 @@
-# Architektur
+<!--
+SPDX-License-Identifier: AGPL-3.0-or-later
+Copyright (C) 2026 Michal Sytko and FrameRift contributors
+Original project: https://github.com/MichalSy/FrameRift
+Additional attribution terms: see NOTICE in the repository root.
+-->
 
-## Aktuelle Implementierung
+# Architecture
 
-- `src/library` enthält Spielmetadaten, SQLite-Zugriff und SteamGridDB-Abfragen mit libcurl und JSON-GLib. Downloads laufen außerhalb der GTK-Callbacks.
-- SQLite-Schema 2 speichert SteamGridDB-ID, öffentliche Quellseite und lokale Pfade für Cover, Hero, Landscape und Logo. Demo-Einträge werden atomar ersetzt; Nutzereinträge bleiben erhalten. Die Migration entfernt die alten gebündelten Demo-Einträge.
-- `src/ui/app.cpp` enthält ausschließlich die GTK-Bibliothek mit Auswahl, Suche und Sortierung. Die UI liest ihre Spiele aus der Bibliotheksdomäne und zeigt vorhandene Cache-Daten auch offline an.
-- `assets/ui` wird als GResource eingebunden. Spielgrafiken werden aus der API geladen und außerhalb des Repositorys lokal gecacht.
-- `tests/library_check.cpp` prüft mit einem kleinen Programm Persistenz, Migration, Datenerhalt und ungültige Cache-Dateien.
+## Implementation status
 
-Der aktuelle Abschnitt beschränkt sich auf die Bibliothek. Demo-Metadaten und Spielzeiten stellen keine installierten Spiele oder gemessene Sitzungen dar. Der API-Key kommt aus `STEAMGRIDDB_API_KEY` und wird nicht gespeichert. Spielprozess, weitere Screens, Fenstereinbettung und Telemetrie sind geplant. Die folgenden Abschnitte beschreiben das Zielbild. Speicherort und Build-Befehle stehen in der [README](../README.md).
+Committed `main` contains the GTK4 game library, search, sorting, recently played games, a SQLite cache and SteamGridDB artwork. The following details describe current development work, including changes that are not yet on `main`:
 
-## Geplanter Ausgangspunkt
+- `src/library` owns game metadata, folder scanning, SQLite access and SteamGridDB requests through libcurl and JSON-GLib. Scans read stable IDs and localized titles from `sce_sys/param.json`, stop at recognized game directories and preserve existing artwork and play history.
+- SQLite schema 3 stores configured game folders, installation paths, SteamGridDB IDs, public source pages and artwork paths. Runtime settings use the existing metadata table: AnyPS5 folder, complete compatible patched runtime directory and relinker executable. Installed artwork replaces demo records transactionally after successful loading; user records remain intact.
+- `src/ui/app.cpp` connects library selection, search, Settings, Play and tab navigation. `src/ui/profiler` owns an output-only VTE console with bounded scrollback; `src/runtime/log` captures the merged process pipe asynchronously, writes the complete raw log and forwards bounded chunks to the UI. Process completion waits for output to drain. No shell, PTY or file polling is involved. Background tasks handle scanning, downloads and conversion; GTK callbacks update the UI.
+- `src/ui/hero` owns banner rendering and WebP playback through libwebpdemux. A GTK tick advances the visible selected animation and the selection crossfade; hidden widgets and disabled GTK animations pause playback. Compressed data, the decoder and the current Cairo frame have explicit ownership; selection keeps only one previous frame for fading.
+- `src/runtime` prepares generated code and launches games on Linux through GIO subprocesses. A missing `game.elf` triggers background relinking of the original `eboot.bin` with `--to-intel`; generated executables and modules live in the cache under `framerift/games/<game-id>/`. Existing output is reused. The modified AnyPS5 fork's `tools/run_game.py` launcher passes the original resource directory separately from generated code and the shared runtime.
+- Rebuild uses the same preparation pipeline with forced conversion, clears generated code for one stable game ID and preserves runtime data and shader caches. It does not spawn the game or update play history. The Profiler shows the result and a bounded conversion-log tail, including converter failures; the full log remains on disk.
+- The game runs in a separate process and its own window. FrameRift observes process exit, records the last-played timestamp after spawning and writes `conversion.log` plus `game.log` under the shared user data directory at `framerift/logs/<game-id>/<session-id>/`.
+- `assets/ui` is embedded as GResources. Game artwork comes from the API and is cached outside the repository. Two small CTest checks, `library_cache` and `game_launch`, cover persistence, scanning, migration, settings and the launch flow without a test framework.
 
-FrameRift ist ein separater Desktop-Launcher mit einer Spielebibliothek und einem Performance-Workspace. AnyPS5 erzeugt native Spielprogramme; die Runtime-Module werden im Spielprozess genutzt. Die UI, ihre Datenbank und Artwork-Abfragen sollen im FrameRift-Prozess liegen. Das Spiel behält einen eigenen Prozess, seine Grafik- und Eingabe-Runtime sowie eine klar definierte Lebensdauer.
+The development scope is the library, external Linux launch and the Profiler console. Native UI checks include reaching an external game window; this does not confirm playability. Settings saves the artwork API key through libsecret in the desktop keyring; `STEAMGRIDDB_API_KEY` overrides it. Keyring access and downloads run in background tasks; the key is excluded from game process environments. Window embedding, timing tools and telemetry remain planned. The following sections describe the target architecture; build commands and release status are in the [README](../README.md).
 
-Diese Trennung erlaubt unabhängige Entwicklung und begrenzt die Anforderungen an AnyPS5. Ein Spiel soll weiter direkt startbar bleiben. Ein optionaler Adapter kann zusätzliche Telemetrie oder Kooperation bei der Fensterdarstellung anbieten. Ein kompletter GUI-Stack muss dafür nicht in die Spiel-Runtime eingebaut werden.
+## Target design
 
-Die weitere Architektur ist ein Vorschlag. Bestätigte Eigenschaften der vorhandenen Runtime und verifizierte Quellstellen stehen in [AnyPS5-Anbindung](anyps5-integration.md). Die kritische Fensterintegration wird in [Spielfensterintegration](game-window-integration.md) behandelt.
+FrameRift is a separate desktop launcher with a game library and a performance workspace. AnyPS5 produces native game programs; its runtime modules run inside the game process. The UI, database and artwork requests belong in the FrameRift process. The game keeps its own process, graphics and input runtime, and a clearly defined lifetime.
 
-## Prozesse und Datenfluss
+This separation supports independent development and limits the requirements placed on AnyPS5. A game should remain directly launchable. An optional adapter could provide telemetry or cooperate with window presentation without adding a complete GUI stack to the game runtime.
+
+The remaining architecture is a proposal. Confirmed runtime properties and verified source references are in [AnyPS5 integration](anyps5-integration.md). [Game-window integration](game-window-integration.md) covers the critical window work.
+
+## Processes and data flow
 
 ```mermaid
 flowchart LR
-    UI[FrameRift UI] --> LIB[Bibliotheksmodell]
-    LIB --> DB[(SQLite: Titel und Sitzungen)]
+    UI[FrameRift UI] --> LIB[Library model]
+    LIB --> DB[(SQLite: titles and sessions)]
     UI --> RUN[Game Runner]
-    RUN --> GAME[AnyPS5-Spielprozess]
-    UI --> HOST[Plattformabhängiger Window Host]
-    HOST -. Native Fensterintegration .-> GAME
-    GAME --> LOGS[Log-Erfassung]
-    GAME -. Optionale Telemetrie .-> INGEST[Telemetrie-Eingang]
-    INGEST --> SESSION[Sitzungsmodell]
+    RUN --> GAME[AnyPS5 game process]
+    UI --> HOST[Platform-specific Window Host]
+    HOST -. Native window integration .-> GAME
+    GAME --> LOGS[Log capture]
+    GAME -. Optional telemetry .-> INGEST[Telemetry input]
+    INGEST --> SESSION[Session model]
     SESSION --> UI
-    SESSION --> CAPTURE[(Aufzeichnungen)]
-    ART[Artwork-Dienst] --> LIB
-    ART --> CACHE[(Bild-Cache)]
+    SESSION --> CAPTURE[(Recordings)]
+    ART[Artwork service] --> LIB
+    ART --> CACHE[(Image cache)]
     ART --> SGDB[SteamGridDB]
 ```
 
-Gestrichelte Beziehungen sind besonders von der Runtime oder Plattform abhängig. Der Window Host und die Telemetrie sind getrennte Schnittstellen: Ein extern dargestelltes Spiel kann trotzdem Messdaten liefern. Umgekehrt macht ein eingebettetes Spielfenster noch keine Frame-Analyse möglich.
+Dashed relationships depend particularly on the runtime or platform. Window hosting and telemetry are separate interfaces: a game in an external window can still supply measurements. An embedded window alone does not provide frame analysis.
 
-## Module
+## Modules
 
-### Bibliotheksmodell
+### Library model
 
-Das Modell verwaltet Spiele unabhängig von den UI-Komponenten. Ein Eintrag enthält eine interne ID, vorhandene Titelmetadaten, die ausführbare Ausgabe, das Spielverzeichnis, Startprofile, Artwork-Zuordnungen und den Zeitpunkt des letzten Starts. Eine Titel-ID kann helfen, mehrere Ausgaben desselben Spiels zu erkennen. Sie ersetzt keine interne Identität für unterschiedliche Builds.
+The model manages games independently of UI components. A future entry could contain an internal ID, available title metadata, the executable output, game directory, launch profiles, artwork mappings and last-launch time. A title ID can help identify different outputs of the same game, but does not distinguish separate builds by itself. The development scanner currently uses the metadata title ID as its stable library ID; separate identities for multiple installations remain a proposal.
 
-Ein Spiel kann mehrere Startprofile besitzen, etwa einen normalen Start und einen instrumentierten Build. FrameRift muss nachvollziehbar anzeigen, welches Programm tatsächlich gestartet wird. Die Auswahl sollte nicht stillschweigend auf eine beliebige ausführbare Datei im Verzeichnis fallen.
+A game could have several launch profiles, such as a normal launch and an instrumented build. FrameRift must make the selected executable clear rather than silently choosing an arbitrary file in the directory.
 
-Das erste Importverfahren kann explizite Auswahl und Metadatenprüfung verwenden. Ein späterer Scanner arbeitet im Hintergrund und meldet Änderungen an das Modell. Große Verzeichnisbäume und defekte Metadaten dürfen die UI nicht blockieren. Dateisystem-Watcher sind eine Komfortfunktion und kein Ersatz für einen reproduzierbaren Import.
+The development scanner works in the background and reports changes to the model. Large directory trees and damaged metadata must not block the UI. Explicit selection and metadata validation remain useful import steps. Filesystem watchers would be a convenience feature, not a substitute for a reproducible import.
 
 ### Game Runner
 
-Der Runner erzeugt aus einem Startprofil einen strukturierten Startauftrag: Programm, Argumentliste, Arbeitsverzeichnis, ausgewählte Umgebungsoptionen und gewünschter Messmodus. Er startet den Prozess, sammelt Standardausgabe und Fehlerausgabe, beobachtet den Exit-Code und führt den Zustand der Sitzung.
+The runner turns a launch configuration into a structured request: program, argument list, working directory, selected environment options and, eventually, measurement mode. It starts the process, captures stdout and stderr, observes the exit code and tracks session state.
 
-Programm und Argumente werden getrennt an die Prozess-API übergeben. Benutzerpfade sind keine zusammengesetzten Shell-Kommandos. Fehler wie eine fehlende ausführbare Datei, ein ungeeignetes Arbeitsverzeichnis oder eine nicht gefundene Runtime-Abhängigkeit werden mit dem tatsächlichen Startkontext erklärt.
+Programs and arguments are passed separately to the process API. User paths are not assembled into shell commands. Errors such as a missing executable, unsuitable working directory or missing runtime dependency are explained using the actual launch context.
 
-Die ersten Versionen sollten fertige AnyPS5-Ausgaben starten. Eine Integration des Relink-/Build-Prozesses ist eine spätere Erweiterung. Falls sie hinzukommt, braucht sie eine eigene Aufgabe mit Fortschritt, Abbruch und Build-Logs; der Start eines vorhandenen Spiels sollte dadurch nicht komplexer werden.
+The development implementation also relinks missing generated code and supports an explicit Rebuild action. Conversion runs as a background task with its own log. Reusing an existing game executable remains a simple launch path; richer build progress and cancellation are possible later extensions.
 
 ### Window Host
 
-Der Window Host kapselt Betriebssystem-Handles, Größenänderungen, DPI, Fokus und Vollbildübergänge. Seine öffentliche Schnittstelle liefert eine Fähigkeit und einen Zustand, keine toolkitübergreifend gültige Annahme über Fensterbesitz.
+The planned Window Host encapsulates operating-system handles, resize, DPI, focus and fullscreen transitions. Its public interface reports a capability and a state instead of assuming shared window ownership across toolkits.
 
-Mögliche Zustände sind „externes Fenster“, „Fenster wird verbunden“, „eingebettetes Fenster“ und „Verbindung verloren“. Ein SDL_Window-Zeiger aus dem Spiel ist im Launcher nicht nutzbar. Native Handles dürfen ebenfalls nur im Rahmen der jeweiligen Plattformregeln verwendet werden.
+Possible states include "external window", "connecting window", "embedded window" and "connection lost". An `SDL_Window` pointer from the game is unusable in the launcher. Native handles must also follow the rules of their platform.
 
-Der Host muss auf Spielende, neu erzeugte Fenster und UI-Größenänderungen reagieren. Ein misslungener Embed-Versuch darf die Prozessverwaltung nicht zerstören. Die externe Darstellung ist ein klar benannter Betriebsmodus; das Produktziel bleibt eine integrierte Spielansicht, deren Tragfähigkeit zuerst bewiesen werden muss.
+The host must react to game exit, replacement windows and UI resize. A failed embedding attempt must not disrupt process management. External presentation is an explicit operating mode; an integrated game view remains a product goal whose feasibility must first be demonstrated.
 
-### Telemetrie-Eingang und Sitzungsmodell
+### Telemetry input and session model
 
-Der Telemetrie-Eingang verarbeitet Nachrichten außerhalb des kritischen UI- und Spielpfads. Eine Sitzung beginnt mit einem Handshake: Protokollversion, Sitzungs-ID, Runtime-Build, verfügbare Messfunktionen und Zeitbasis. Die UI zeigt anschließend nur die tatsächlich angebotenen Messbereiche.
+The planned telemetry input processes messages outside the critical UI and game paths. A session would begin with a handshake containing protocol version, session ID, runtime build, measurement capabilities and time base. The UI would then expose only the measurements actually provided.
 
-Messpakete brauchen Sequenznummern und eine eindeutige Frame-Zuordnung. CPU- und GPU-Ereignisse können verzögert eintreffen. Das Sitzungsmodell sammelt sie, kennzeichnet unvollständige Frames und stellt eine konsistente Auswahl für Diagramm und Detailanalyse bereit. Fehlende Ereignisse sind ein sichtbarer Datenverlust, kein impliziter Nullwert.
+Measurement packets need sequence numbers and unambiguous frame correlation. CPU and GPU events may arrive late. The session model would collect them, mark incomplete frames and provide consistent selections for charts and detail analysis. Missing events represent visible data loss, not an implicit zero.
 
-Ein begrenzter Ringpuffer hält Live-Daten. Eine zusätzliche Aufzeichnung schreibt größere Zeiträume auf einen Hintergrundpfad. Bei Überlast darf der Sender Messereignisse nach einer definierten Regel verwerfen und Verluste zählen. UI-Stau oder eine volle Aufzeichnungsqueue dürfen das Spiel nicht unbegrenzt aufhalten.
+A bounded ring buffer would hold live data. Recording could write longer intervals in the background. Under overload, the sender should follow a defined policy for dropping events and counting losses. A stalled UI or full recording queue must not hold up the game indefinitely.
 
-### Artwork-Dienst
+### Artwork service
 
-Der Dienst trennt Suche, Auswahl und Bild-Download. Ein automatisch vorgeschlagener SteamGridDB-Treffer wird als Zuordnung gespeichert und kann korrigiert werden. Cache-Einträge referenzieren Asset-ID, Quelle, Variante, Dateiformat und Aktualisierungsinformationen.
+The service separates search, selection and image download. An automatically suggested SteamGridDB match is stored as a mapping; manual correction is a future extension. Cache records could later include asset ID, source, variant, format and refresh information.
 
-Die UI erhält kleine Vorschaubilder und erst bei Bedarf größere Hero-Bilder. Download, Dekodierung und Skalierung großer Grafiken gehören nicht in den UI-Callback. Animierte Bilder haben einen eigenen Lebenszyklus und werden beim Verlassen einer Ansicht beziehungsweise im ruhigen Messmodus pausiert.
+The UI should receive small previews and larger hero images when needed. Downloading, decoding and scaling large images must not run inside UI callbacks. Animated images have their own lifetime and pause when their view is hidden. A quiet measurement mode could also pause them later.
 
-## Lokale Speicherung
+## Local storage
 
-SQLite speichert bereits den Spielecache. Geplant sind weitere strukturierte, eher selten geänderte Daten: Startprofile, Artwork-Zuordnung, Sitzungsliste und Capture-Metadaten. Der Datenzugriff bleibt in seiner Domäne gebündelt. Spätere Schemaänderungen brauchen Migrationen; ein Scan soll keine manuelle Artwork-Auswahl überschreiben.
+SQLite already stores the game cache. Other structured, infrequently changed data may include launch profiles, artwork mappings, session lists and capture metadata. Data access stays within its domain. Schema changes need migrations; scans must preserve user artwork choices when those are introduced.
 
-Hochfrequente Messereignisse gehören in sequenzielle Capture-Dateien oder Blöcke mit separatem Index. Ein einzelner SQL-Schreibvorgang pro GPU-Ereignis auf dem UI-Thread wäre für diesen Zweck ungeeignet. Format, Rotation, Größenlimits und optionale Kompression werden erst nach einem kleinen Telemetrieprototyp festgelegt.
+High-frequency measurements belong in sequential capture files or blocks with a separate index. Writing one SQL row per GPU event on the UI thread would be unsuitable. Format, rotation, size limits and optional compression should follow a small telemetry prototype.
 
-Konfiguration wird von Laufzeitdaten getrennt. Zu unterscheiden sind App-Einstellungen, Spielprofile, Zugangsdaten für SteamGridDB, Bild-Cache und Messaufzeichnungen. API-Schlüssel werden nicht in Capture-Exporte oder normale Diagnose-Logs geschrieben. Betriebssystemgerechte Speicherorte müssen bei der Paketierung festgelegt werden.
+Configuration is separate from runtime data. App settings, game profiles, SteamGridDB credentials, artwork caches and recordings have different lifetimes. API keys must not appear in capture exports or ordinary diagnostic logs. Platform-appropriate storage locations must be checked during packaging.
 
-## Sitzungszustände
+## Session states
 
-Ein geplanter Zustandsablauf ist:
+A proposed state flow is:
 
 ```text
-Bereit → Start wird vorbereitet → Prozess gestartet → Spiel läuft → Prozess beendet
-                                      │                  │
-                                      ├─ Fensterstatus   ├─ Aufzeichnung an/aus
-                                      └─ Telemetriestatus└─ Live-/Frame-Auswahl
+Ready → Preparing launch → Process started → Game running → Process exited
+                                │                  │
+                                ├─ Window state    ├─ Recording on/off
+                                └─ Telemetry state └─ Live/frame selection
 ```
 
-Fensterstatus, Telemetriestatus und Aufzeichnung sind voneinander unabhängig. Ein Spiel kann laufen, obwohl die Messverbindung abbricht. Eine gespeicherte Aufzeichnung kann nach Spielende weiter analysiert werden. Zur Bibliothek zu navigieren beendet den Prozess nicht automatisch; die konkrete Navigation für eine laufende Sitzung muss eindeutig gestaltet werden.
+Window state, telemetry state and recording are independent. A game can keep running after its measurement connection is lost. A saved recording can be analyzed after game exit. Navigating to the library does not end the process; navigation during a running session must make this behavior clear.
 
-Die erste Version sollte eine aktive Spielsitzung unterstützen. Mehrere gleichzeitig laufende Spiele würden Prozessauswahl, Fokus, Controller und Telemetrie wesentlich komplizierter machen und sind keine Voraussetzung für das Kernziel.
+The first version should support one active game session. Concurrent games would complicate process selection, focus, controllers and telemetry, and are not required for the core goal.
 
-## Entkopplung von AnyPS5
+## Separation from AnyPS5
 
-Ein minimaler Integrationsvertrag ist einer Vielzahl implizit geparster Logzeilen vorzuziehen. Für einen frühen Prototyp kann der Runner vorhandene Logs und Timing-Dateien nutzen. Solche Adapter kennzeichnen die eingeschränkte Messsemantik und ersetzen keine dauerhafte API.
+A small integration contract is preferable to parsing many implicit log formats. Early prototypes can use existing logs and timing files. Such adapters must identify their limited measurement semantics and do not replace a lasting API.
 
-Spätere Änderungen an AnyPS5 sollten klein und unabhängig prüfbar sein: optionaler Telemetrie-Export, Capability-Abfrage oder ein kooperativer Fensteradapter. FrameRift bleibt auch ohne diese Erweiterung als Bibliothek und Launcher sinnvoll nutzbar. Die gemeinsame Weiterentwicklung erfordert keine Zusage, dass AnyPS5-Maintainer eine konkrete Schnittstelle bereits akzeptiert haben.
+Later AnyPS5 changes should be small and independently verifiable: optional telemetry export, capability discovery or a cooperative window adapter. FrameRift remains useful as a library and launcher without these additions. Joint development does not imply that AnyPS5 maintainers have already accepted a particular interface. Game execution requires the [modified AnyPS5 fork](https://github.com/MichalSy/AnyPS5).
 
-## Quellstruktur
+## Source layout
 
-Die aktuelle Struktur enthält nur die implementierten Bereiche:
+The development tree contains these implemented areas; `main` currently contains the library and its UI, without the runtime additions:
 
 ```text
 src/
-  library/      Spielmetadaten, SQLite-Cache und SteamGridDB
-  ui/           Native Spielebibliothek
+  library/      Game metadata, scanning, SQLite cache and SteamGridDB
+  runtime/      Conversion, external process launch and direct output capture
+  ui/           Native game library, Settings and Profiler console
 assets/
-  ui/           CSS und App-Zeichen
-  design/       Referenzentwürfe
-tests/          Kompakter Cache-Check
+  ui/           CSS and app marks
+  design/       Reference designs
+tests/          Small cache and launch checks
 ```
 
-Weitere Domänen entstehen erst mit einem konkreten Bedarf. Verhalten und Daten bleiben zusammen; eine neue Datei braucht eine klare fachliche Zuordnung. Die Architektur soll nachvollziehbare Grenzen schaffen und kein umfangreiches Framework vorwegnehmen.
+Additional domains should appear only when there is a concrete need. Behavior and data stay together; every new file needs a clear domain responsibility. The architecture should make boundaries understandable without building a large framework in advance.

@@ -1,3 +1,10 @@
+<!--
+SPDX-License-Identifier: AGPL-3.0-or-later
+Copyright (C) 2026 Michal Sytko and FrameRift contributors
+Original project: https://github.com/MichalSy/FrameRift
+Additional attribution terms: see NOTICE in the repository root.
+-->
+
 # FrameRift
 
 **Launch games. Understand frames.**
@@ -45,4 +52,6 @@ Contributions are welcome; see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
-FrameRift code and documentation are licensed under [MIT](LICENSE). AnyPS5 remains under [GPL-2.0-only](https://github.com/MichalSy/AnyPS5/blob/main/LICENSE). Third-party artwork and trademarks retain their respective rights and are excluded from FrameRift's MIT license.
+Original FrameRift code and documentation use [AGPL-3.0-or-later](LICENSE), with the attribution requirement in [NOTICE](NOTICE). Distributed derivatives must provide corresponding source under the AGPL; modified network services must offer their source to users. Preserve the FrameRift credit and original project link.
+
+AnyPS5 remains under [GPL-2.0-only](https://github.com/MichalSy/AnyPS5/blob/main/LICENSE). Third-party artwork and trademarks retain their respective rights and are excluded from FrameRift's license.

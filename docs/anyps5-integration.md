@@ -1,127 +1,146 @@
-# Integration mit AnyPS5
+<!--
+SPDX-License-Identifier: AGPL-3.0-or-later
+Copyright (C) 2026 Michal Sytko and FrameRift contributors
+Original project: https://github.com/MichalSy/FrameRift
+Additional attribution terms: see NOTICE in the repository root.
+-->
 
-FrameRift ist als separate native Anwendung für Windows und Linux geplant. Sie soll eine Spielebibliothek, das Starten vorbereiteter Spiele und eine Profiler-Ansicht verbinden. Die eigentliche Spielausführung bleibt bei dem von AnyPS5 konvertierten nativen Programm.
+# AnyPS5 integration
 
-Dieses Dokument beschreibt eine geplante Integration. FrameRift enthält derzeit keine implementierte Laufzeit, keinen Launcher und keine funktionierende Fenstereinbettung. Bestätigte Aussagen über AnyPS5 beziehen sich auf den fest verlinkten [Upstream-Stand `197ffac97203d715a258a28b432fa2eedbf8be6f`](https://github.com/boykopovar/AnyPS5/tree/197ffac97203d715a258a28b432fa2eedbf8be6f). Spätere Upstream-Änderungen müssen gesondert geprüft werden.
+FrameRift is planned as a separate native application for Windows and Linux, combining a game library, prepared-game launch and a Profiler view. Game execution stays in the native program converted by AnyPS5.
 
-Siehe außerdem [Profiling](profiling.md), [Controller und Eingaben](controller-input.md) und die [Projektübersicht](../README.md).
+Committed `main` contains the library and cache. Current development work adds Linux conversion and launch through the [modified AnyPS5 fork](https://github.com/MichalSy/AnyPS5), with a separate game window and Profiler console. Window embedding and structured measurements remain planned. Confirmed upstream details below refer to the pinned [snapshot `197ffac97203d715a258a28b432fa2eedbf8be6f`](https://github.com/boykopovar/AnyPS5/tree/197ffac97203d715a258a28b432fa2eedbf8be6f). Later upstream changes require separate review. Stock upstream AnyPS5 is not a supported substitute for the modified fork.
 
-## Bestätigte AnyPS5-Architektur
+See also [Profiling](profiling.md), [Controller and input](controller-input.md) and the [project overview](../README.md).
 
-AnyPS5 beschreibt sich als Werkzeug zum Portieren ausführbarer Programme. Sein Relinker erzeugt das native Ausgabeformat; die AnyPS5-Systembibliotheken implementieren die benötigten Funktionen als dynamisch geladene Bibliotheken. Das konvertierte Spiel läuft als normaler Betriebssystemprozess. Die PRX-Bibliotheken laufen in diesem Spielprozess. Es gibt keinen separaten AnyPS5-Laufzeitprozess, dem FrameRift einfach einen Spielauftrag schicken könnte. Quellen: [AnyPS5 README](https://github.com/boykopovar/AnyPS5/blob/197ffac97203d715a258a28b432fa2eedbf8be6f/README.md), [Architektur](https://github.com/boykopovar/AnyPS5/blob/197ffac97203d715a258a28b432fa2eedbf8be6f/docs/dev/ARCHITECTURE.md).
+## Confirmed AnyPS5 architecture
 
-Für die geplante Integration sind drei Komponenten zu unterscheiden:
+AnyPS5 describes itself as a tool for porting executables. Its relinker produces the native output format; AnyPS5 system libraries implement required functions as dynamically loaded libraries. The converted game runs as an ordinary operating-system process, with the PRX libraries loaded into that process. There is no separate AnyPS5 runtime process to which FrameRift can simply submit a game request. Sources: [AnyPS5 README](https://github.com/boykopovar/AnyPS5/blob/197ffac97203d715a258a28b432fa2eedbf8be6f/README.md), [Architecture](https://github.com/boykopovar/AnyPS5/blob/197ffac97203d715a258a28b432fa2eedbf8be6f/docs/dev/ARCHITECTURE.md).
 
-| Komponente | Bestätigte Aufgabe | Geplante Aufgabe von FrameRift |
-|---|---|---|
-| Relinker | Konvertiert ein sauberes ELF und gebündelte Spielmodule. | Spätere Erweiterung: Eingaben und Optionen verwalten, Konvertierung starten und Ergebnisse anzeigen. |
-| Konvertiertes Spiel | Läuft als Linux-ELF oder Windows-EXE. | Als eigenen Prozess starten und seinen Zustand beobachten. |
-| AnyPS5-Systembibliotheken | Werden vom Betriebssystem in den Spielprozess geladen. | Passenden Bibliothekssatz auswählen und dessen Herkunft dokumentieren. |
+The integration involves three components:
 
-Die AnyPS5-Dokumentation verlangt ein sauberes ELF als Eingabe. FrameRift sollte daraus keine bereits vorhandene Unterstützung für beliebige PS5-Pakete, SELF-Container oder deren Extraktion ableiten. Der Relinker konvertiert die von ihm unterstützten Eingaben; eine darüber hinausgehende Importpipeline wäre ein eigenes Vorhaben. Quelle: [Relinker-Nutzung](https://github.com/boykopovar/AnyPS5/blob/197ffac97203d715a258a28b432fa2eedbf8be6f/docs/user/USAGE.md#input-and-conversion).
+| Component | Confirmed responsibility | FrameRift responsibility |
+| --- | --- | --- |
+| Relinker | Converts a clean ELF and bundled game modules | Development: convert missing generated code and support explicit rebuilds. Broader input/option management remains planned. |
+| Converted game | Runs as a Linux ELF or Windows EXE | Development: start it as a separate Linux process and observe its state. Windows launch remains unverified. |
+| AnyPS5 system libraries | Loaded by the operating system into the game process | Development: use an explicitly configured compatible library set. Richer provenance/version tracking remains planned. |
 
-## Geplante Prozessaufteilung
+The pinned AnyPS5 documentation requires a clean ELF input. This must not be interpreted as support for arbitrary PS5 packages, SELF containers or their extraction. The relinker converts the inputs it supports; a broader import pipeline would be a separate effort. The development launcher passes the original `eboot.bin` to the configured modified relinker, without establishing general package or extraction support. Source: [Relinker usage](https://github.com/boykopovar/AnyPS5/blob/197ffac97203d715a258a28b432fa2eedbf8be6f/docs/user/USAGE.md#input-and-conversion).
+
+## Process separation
 
 ```mermaid
 flowchart LR
-    ui["FrameRift: native Oberfläche"] --> session["FrameRift: Sitzungsverwaltung"]
-    session --> relink["Relinker-Prozess: optionale Vorbereitung"]
-    relink --> output["Native Spielartefakte"]
+    ui["FrameRift: native UI"] --> session["FrameRift: session management"]
+    session --> relink["Relinker process: optional preparation"]
+    relink --> output["Native game artifacts"]
     session --> game
     output --> game
-    subgraph game["Eigener Spielprozess"]
-        executable["app.elf oder app.exe"] --> prx["AnyPS5-Systembibliotheken"]
-        prx --> sdl["SDL-Fenster und Vulkan-Ausgabe"]
+    subgraph game["Separate game process"]
+        executable["app.elf or app.exe"] --> prx["AnyPS5 system libraries"]
+        prx --> sdl["SDL window and Vulkan output"]
     end
-    game --> logs["Vorhandene Logs und Timingdatei"]
+    game --> logs["Existing logs and timing file"]
     logs --> ui
-    game -. "Geplante strukturierte Telemetrie" .-> ui
+    game -. "Planned structured telemetry" .-> ui
 ```
 
-FrameRift soll den Spielprozess weder in seinen GUI-Prozess laden noch dessen Vulkan-Ausgabe durch die Bibliotheksansicht rendern. Eine native Fenstereinbettung kann die sichtbare Anordnung ändern, lässt aber die Prozessgrenze bestehen. Die interne Kommunikation und die Fensterintegration sind zwei getrennte Schnittstellen.
+FrameRift does not load the game into its GUI process or render the game's Vulkan output through the library view. Native window embedding could change the visible arrangement while preserving the process boundary. Internal communication and window integration are separate interfaces. Timing-file ingestion in the diagram remains planned.
 
-Der erste nutzbare Startpfad soll auch mit einem eigenen Spielfenster funktionieren. Damit bleiben Spiele startbar, während die Einbettung für Windows und Linux erprobt wird. Ob ein eingebetteter Modus zuverlässig angeboten werden kann, ist eine offene technische Prüfung und kein bereits nachgewiesenes Produktmerkmal.
+The development launch path uses a separate game window. This allows launch work to proceed while embedding is investigated for Windows and Linux. Reliable embedded mode remains an open technical question, not a demonstrated product feature.
 
-## Vorhandene Laufzeitstruktur
+## Existing upstream runtime layout
 
-AnyPS5 dokumentiert diese Struktur relativ zur konvertierten ausführbaren Datei:
+AnyPS5 documents this layout relative to the converted executable:
 
 ```text
-Spiel/
-    app.elf oder app.exe
+Game/
+    app.elf or app.exe
     libs/
         *.prx
     app0/
-        Spielressourcen
+        Game resources
         sce_sys/
             param.json
             icon0.png
         sce_module/
-            konvertierte Spielmodule
+            Converted game modules
 ```
 
-`sce_sys/param.json` und `icon0.png` sind konkrete vom Code gelesene Ressourcen; ihr Vorhandensein ist beim Import zu prüfen. Die Verzeichnisnamen der gebündelten Module können gemäß AnyPS5 auch `sce_modules/` oder `prx/` sein. `libs/` enthält die AnyPS5-Systembibliotheken und nicht die unveränderten PS5-Module. Eine abweichende Bibliothekssuche lässt sich beim Konvertieren mit `--rpath` festlegen. Spielressourcen werden laut AnyPS5 separat nach `app0/` kopiert. Quellen: [Runtime-Layout](https://github.com/boykopovar/AnyPS5/blob/197ffac97203d715a258a28b432fa2eedbf8be6f/docs/user/USAGE.md#runtime-layout), [Metadatenpfade im Code](https://github.com/boykopovar/AnyPS5/blob/197ffac97203d715a258a28b432fa2eedbf8be6f/core/libs/prx/libkernel/AppMetadata/src/AppMetadata.cpp#L24).
+`sce_sys/param.json` and `icon0.png` are resources read by the code; import must check whether they exist. AnyPS5 also permits bundled-module directories named `sce_modules/` or `prx/`. `libs/` contains AnyPS5 system libraries rather than unchanged PS5 modules. A different library search path can be selected during conversion with `--rpath`. AnyPS5 describes game resources as copied separately into `app0/`. Sources: [Runtime layout](https://github.com/boykopovar/AnyPS5/blob/197ffac97203d715a258a28b432fa2eedbf8be6f/docs/user/USAGE.md#runtime-layout), [Metadata paths in code](https://github.com/boykopovar/AnyPS5/blob/197ffac97203d715a258a28b432fa2eedbf8be6f/core/libs/prx/libkernel/AppMetadata/src/AppMetadata.cpp#L24).
 
-FrameRift soll für jedes Spiel ein eindeutiges Arbeitsverzeichnis verwenden. Das ist auch für relative Ressourcenpfade, Eingabekonfiguration und `frame-timing.log` relevant. Zwei parallel laufende Spiele dürfen ihre Logs oder ihre Konfiguration nicht gegenseitig überschreiben.
+The development integration uses the fork's `tools/run_game.py` with explicit original-game, generated-executable, working-directory and shared-runtime paths. It preserves original resources at their installation path and caches generated code under `framerift/games/<game-id>/`.
 
-Unter Windows benötigt ein selbst gebauter Bibliothekssatz laut AnyPS5 außerdem passende Toolchain-DLLs im Bibliotheksverzeichnis. Die Releasearchive enthalten diese bereits. FrameRift soll fehlende Dateien als konkrete Startdiagnose anzeigen, statt vorauszusetzen, dass eine gleichnamige DLL im globalen Suchpfad genügt. Quelle: [Windows-Laufzeitabhängigkeiten](https://github.com/boykopovar/AnyPS5/blob/197ffac97203d715a258a28b432fa2eedbf8be6f/docs/user/USAGE.md#runtime-layout).
+Each game needs a distinct working directory, including for relative resource paths, input configuration and `frame-timing.log`. Concurrent games must not overwrite one another's logs or configuration.
 
-## Titel, Identität und lokale Bilder
+On Windows, AnyPS5 says a locally built library set also needs matching toolchain DLLs in the library directory; release archives include these. A future Windows launcher should diagnose missing files explicitly rather than assume a same-named DLL on the global search path is sufficient. Source: [Windows runtime dependencies](https://github.com/boykopovar/AnyPS5/blob/197ffac97203d715a258a28b432fa2eedbf8be6f/docs/user/USAGE.md#runtime-layout).
 
-AnyPS5 liest aus `param.json` das Feld `titleId` sowie einen lokalisierten `titleName` unter `localizedParameters`. Der vorhandene Parser bevorzugt die angegebene Standardsprache, dann `en-US`, anschließend einen vorhandenen Spracheintrag. FrameRift kann dasselbe Quelldokument lesen, muss seine eigene Auswahl nach UI-Sprache aber ausdrücklich definieren. Quelle: [ParamJsonParser](https://github.com/boykopovar/AnyPS5/blob/197ffac97203d715a258a28b432fa2eedbf8be6f/core/libs/prx/libkernel/AppMetadata/src/ParamJsonParser.cpp#L244).
+## Storage by game ID
 
-Die Titel-ID soll ein Metadatenmerkmal sein, nicht allein der Primärschlüssel der FrameRift-Bibliothek. Eine Bibliothek kann mehrere Versionen, Konvertierungen oder Installationen desselben Titels enthalten. Geplant ist deshalb eine eigene Eintrags-ID mit separaten Feldern für Titel-ID, Installationspfad, Spielversion soweit verfügbar und verwendeten AnyPS5-Bibliothekssatz.
+- Managed directories use a stable library game ID; display names and original installation-folder names are not path keys.
+- The UI displays game titles from metadata, never installation-folder names.
+- The game ID remains stable when an installation is renamed or moved.
+- Development generated code lives under `framerift/games/<game-id>/` in the cache. A versioned layout such as `<cache-root>/<game-id>/<runtime-id>/` is a future proposal, not the current path.
+- Persistent saves should live under `<framerift-data-root>/saves/<game-id>/`, independent of runtime version and conversion cache.
+- Logs live under `<framerift-data-root>/logs/<game-id>/<session-id>/`; every launch gets its own session directory.
+- Saves and logs should share one FrameRift data root, with subdirectories created automatically. A configurable data root remains a proposal. Original games and the shared runtime stay at their selected paths.
 
-`icon0.png` ist bereits Bestandteil der AnyPS5-Integration: Die Laufzeit verwendet es als SDL-Fenstericon; der Windows-Konvertierungspfad verwendet das Icon außerdem für die EXE-Ressourcen. Quellen: [SDL-Fenstericon](https://github.com/boykopovar/AnyPS5/blob/197ffac97203d715a258a28b432fa2eedbf8be6f/core/libs/prx/libSceVideoOut/src/DisplayWindow.cpp#L25), [Windows-Relinker](https://github.com/boykopovar/AnyPS5/blob/197ffac97203d715a258a28b432fa2eedbf8be6f/core/relinker/main.cpp#L122).
+## Titles, identity and local artwork
 
-Für FrameRift ist folgender Datenfluss geplant:
+AnyPS5 reads `titleId` from `param.json` and a localized `titleName` under `localizedParameters`. Its existing parser prefers the declared default language, then `en-US`, then an available language entry. FrameRift can read the same document but must define its own language selection explicitly. Source: [ParamJsonParser](https://github.com/boykopovar/AnyPS5/blob/197ffac97203d715a258a28b432fa2eedbf8be6f/core/libs/prx/libkernel/AppMetadata/src/ParamJsonParser.cpp#L244).
 
-1. Lokalen Titel und lokale Titel-ID einlesen.
-2. Vorhandenes `icon0.png` als kleine Statusgrafik und lokale Ersatzquelle erfassen.
-3. SteamGridDB als primäre Quelle für Cover, breite Hintergrundbilder und transparente Logos zuordnen; manuelle Auswahl hat Vorrang.
-4. Gecachte Ressourcen offline weiterverwenden und bei fehlender Zuordnung auf verfügbare lokale Bilder oder Platzhalter zurückgreifen. Details stehen in [Artwork](artwork.md).
+The development scanner uses the metadata title ID as its stable library ID. Supporting multiple versions, conversions or installations of one title may require a separate entry ID, with fields for title ID, installation path, available game version and the selected AnyPS5 library set. That richer identity model remains a proposal.
 
-Das App-Icon garantiert kein hochkantiges Store-Cover und kein transparentes Logo. Eine Nutzung von `pic0.png` oder `pic1.png` durch die untersuchte AnyPS5-Metadaten-/Fensterintegration ist nicht belegt. FrameRift soll keine vollständige Artwork-Ausstattung jedes Spiels voraussetzen und lokal jederzeit ohne Online-Artwork funktionieren.
+`icon0.png` is already part of AnyPS5 integration: the runtime uses it as the SDL window icon, and Windows conversion also uses it for EXE resources. Sources: [SDL window icon](https://github.com/boykopovar/AnyPS5/blob/197ffac97203d715a258a28b432fa2eedbf8be6f/core/libs/prx/libSceVideoOut/src/DisplayWindow.cpp#L25), [Windows relinker](https://github.com/boykopovar/AnyPS5/blob/197ffac97203d715a258a28b432fa2eedbf8be6f/core/relinker/main.cpp#L122).
 
-## Konvertierung und Startprofile
+The proposed artwork flow is:
 
-FrameRift soll die tatsächlich dokumentierten Relinker-Optionen gezielt anbieten. Dazu zählen unter anderem die Auswahl der Windows-Ausgabe, `--to-intel`, `--registry` und `--rpath`. Ein Profil ist dabei eine FrameRift-Konfiguration; es bedeutet noch keine neue AnyPS5-Konfigurationsschnittstelle. Die genauen Optionen und ihre gegenseitigen Einschränkungen ergeben sich aus [AnyPS5 USAGE](https://github.com/boykopovar/AnyPS5/blob/197ffac97203d715a258a28b432fa2eedbf8be6f/docs/user/USAGE.md#options).
+1. Read the local game title and title ID; implemented in the development scanner.
+2. Record any `icon0.png` as a small status image and local fallback; planned.
+3. Match SteamGridDB as the primary source for covers, wide backgrounds and transparent logos. Manual selection taking precedence remains planned.
+4. Reuse cached resources offline and fall back to available local images or placeholders when matching fails. Local-icon fallback remains planned; details are in [Artwork](artwork.md).
 
-Geplante Profildaten sind:
+An app icon does not guarantee a portrait store cover or transparent logo. The examined AnyPS5 metadata/window integration does not establish use of `pic0.png` or `pic1.png`. FrameRift must not assume every game has a complete artwork set and should remain usable without online artwork.
 
-- Pfad des Relinkers und des erzeugten nativen Spiels.
-- Arbeitsverzeichnis und Bibliothekssatz.
-- Freigegebene Konvertierungsoptionen und gezielte Umgebungsvariablen.
-- Eingabeprofil und gewünschter Fenster-/Profilingmodus.
-- Herkunft und Version der verwendeten Artefakte.
+## Conversion and launch profiles
 
-Ein Wechsel der PRX-Bibliotheken bedeutet nicht automatisch, dass jede vorhandene Konvertierung gültig bleibt oder neu erstellt werden muss. FrameRift soll Artefaktversionen und Konvertierungsoptionen erfassen und Unterschiede anzeigen. Eine belastbare Regel für nötige Neukonvertierungen ist noch zu ermitteln; ein unbegründetes automatisches Ersetzen funktionierender Bibliothekssätze ist nicht vorgesehen.
+FrameRift should offer documented relinker options deliberately. Examples include Windows output selection, `--to-intel`, `--registry` and `--rpath`. A profile is a FrameRift configuration, not evidence of a new AnyPS5 configuration interface. Exact options and their restrictions are documented in [AnyPS5 USAGE](https://github.com/boykopovar/AnyPS5/blob/197ffac97203d715a258a28b432fa2eedbf8be6f/docs/user/USAGE.md#options).
 
-## Startdiagnose und Import-Audit
+Proposed profile data includes:
 
-AnyPS5 besitzt bereits ein Import-Audit. Mit `--registry` erzeugte Registerdateien werden mit den Exporten der gebauten PRX-Bibliotheken verglichen. Das Audit unterscheidet implementierte Funktionen, vollständig werfende Stubs, fehlende Exporte und Imports aus Spielmodulen. Es unterstützt JSON-Ausgabe. Quelle: [Import-Audit](https://github.com/boykopovar/AnyPS5/blob/197ffac97203d715a258a28b432fa2eedbf8be6f/docs/user/USAGE.md#import-audit).
+- Relinker and generated native-game paths.
+- Working directory and library set.
+- Supported conversion options and selected environment variables.
+- Input profile and desired window/profiling mode.
+- Provenance and version of the artifacts in use.
 
-FrameRift soll diesen vorhandenen Bericht verständlich anzeigen. Ein erfolgreicher Import-Audit ist eine Aussage über die geprüfte Importauflösung, keine Zusage, dass das Spiel korrekt startet, spielbar ist oder grafisch fehlerfrei funktioniert. Auch Designbilder mit einem konkreten Spieltitel sind keine Kompatibilitätsnachweise.
+Replacing PRX libraries does not automatically mean that every existing conversion remains valid or must be rebuilt. FrameRift should record artifact versions and conversion options and display differences. A reliable rule for required reconversion remains to be determined; working library sets should not be replaced automatically without a reason.
 
-Die Sitzungsverwaltung soll Prozessstart, Standardausgabe, Fehlerausgabe und Exitstatus asynchron erfassen. Der UI-Thread darf weder auf die vollständige Spielausführung noch auf große Logdateien warten. Bei einem Fehler soll die zuletzt bekannte Phase sichtbar bleiben: Vorbereitung, Loader/Abhängigkeiten, Start oder laufende Spielsitzung. Das README dokumentiert, dass nicht unterstützte oder unerwartete AnyPS5-Zustände Fehler auslösen und das Programm beenden können. Quelle: [Fehlerverhalten](https://github.com/boykopovar/AnyPS5/blob/197ffac97203d715a258a28b432fa2eedbf8be6f/README.md).
+## Launch diagnostics and import audit
 
-## Spielfenster und offene Integration
+AnyPS5 already has an import audit. Registry files generated with `--registry` are compared with the exports of built PRX libraries. The audit distinguishes implemented functions, stubs that always throw, missing exports and imports from game modules. It supports JSON output. Source: [Import audit](https://github.com/boykopovar/AnyPS5/blob/197ffac97203d715a258a28b432fa2eedbf8be6f/docs/user/USAGE.md#import-audit).
 
-Die untersuchte Laufzeit erzeugt ihr Fenster selbst mit `SDL_CreateWindow`. `VideoOutDriver` hängt dieses Fenster an die interne AGC/Vulkan-Ausgabe und verarbeitet SDL-Ereignisse. Eine externe FrameRift-Parent-Handle-Schnittstelle ist in diesen Komponenten nicht vorhanden. Quellen: [DisplayWindow](https://github.com/boykopovar/AnyPS5/blob/197ffac97203d715a258a28b432fa2eedbf8be6f/core/libs/prx/libSceVideoOut/src/DisplayWindow.cpp#L52), [Present-Loop](https://github.com/boykopovar/AnyPS5/blob/197ffac97203d715a258a28b432fa2eedbf8be6f/core/libs/prx/libSceVideoOut/src/VideoOutDriver.cpp#L540).
+FrameRift could present this report clearly. A successful import audit confirms only the checked import resolution; it does not promise correct launch, playability or error-free graphics. Design images featuring a particular title are not compatibility evidence either.
 
-Eine spätere Einbettung benötigt mindestens eine sichere Zuordnung von Spielsitzung zu nativem Fenster, Größen-/DPI-Behandlung, Fokus, Vollbild und sauberes Ablösen bei Prozessende. Ein Speicherzeiger auf ein GUI- oder SDL-Fenster ist keine prozessübergreifende Schnittstelle. Die im Spielprozess erzeugten SDL-Objekte bleiben dort.
+The development session manager captures process start, stdout, stderr and exit status asynchronously. The UI thread must not wait for a whole game session or a large log file. Future diagnostics should preserve the last known phase on failure: preparation, loader/dependencies, launch or running session. AnyPS5's README documents that unsupported or unexpected states can cause errors and terminate the program. Source: [Error behavior](https://github.com/boykopovar/AnyPS5/blob/197ffac97203d715a258a28b432fa2eedbf8be6f/README.md).
 
-Der betrachtete AnyPS5-Build aktiviert X11 und deaktiviert Wayland. Das ist die konkrete Ausgangslage für einen Linux-Spike; daraus folgt keine allgemeine Aussage, dass ein beliebiges GTK- oder anderes GUI-Fenster unter Wayland ein fremdes SDL-Fenster aufnehmen kann. Quelle: [SDL-Buildkonfiguration](https://github.com/boykopovar/AnyPS5/blob/197ffac97203d715a258a28b432fa2eedbf8be6f/CMakeLists.txt#L68).
+## Game windows and open integration work
 
-## Noch zu prüfende Spikes
+The examined runtime creates its own window with `SDL_CreateWindow`. `VideoOutDriver` connects it to the internal AGC/Vulkan output and processes SDL events. These components have no external FrameRift parent-handle interface. Sources: [DisplayWindow](https://github.com/boykopovar/AnyPS5/blob/197ffac97203d715a258a28b432fa2eedbf8be6f/core/libs/prx/libSceVideoOut/src/DisplayWindow.cpp#L52), [Present loop](https://github.com/boykopovar/AnyPS5/blob/197ffac97203d715a258a28b432fa2eedbf8be6f/core/libs/prx/libSceVideoOut/src/VideoOutDriver.cpp#L540).
 
-| Prüfung | Erwartetes Ergebnis vor einer Implementierungsentscheidung |
-|---|---|
-| Nativer Start auf beiden Zielsystemen | Ein vorbereitetes Spiel lässt sich mit definiertem Arbeitsverzeichnis starten; Logs und Exitstatus sind verfügbar. |
-| Bibliothekssätze | Versionen, Abhängigkeiten und Artefaktherkunft lassen sich ohne Veränderung der Quelldateien zuordnen. |
-| Lokale Metadaten | Fehlende oder beschädigte JSON-/Bilddateien führen zu einem nachvollziehbaren Bibliotheks-Fallback. |
-| Windows-Fensterintegration | Eingaben, Resize, DPI, Vollbild und Prozessende funktionieren mit dem tatsächlichen SDL-/Vulkan-Fenster. |
-| Linux-Fensterintegration | X11/XWayland-Verhalten ist getrennt von einer späteren nativen Wayland-Lösung dokumentiert. |
-| Telemetrie | Die Verbindung bleibt optional; Verbindungsverlust blockiert das Spiel nicht. Details stehen in [Profiling](profiling.md). |
+Later embedding needs at least reliable session-to-window matching, resize/DPI handling, focus, fullscreen and clean detachment on process exit. A pointer to a GUI or SDL window is not a cross-process interface. SDL objects created inside the game process remain there.
 
-Diese Spikes sind geplante Untersuchungen. Dieses Repository liefert noch keine entsprechende Laufzeit oder ein überprüftes Integrationsergebnis.
+The examined AnyPS5 build enables X11 and disables Wayland. This is the concrete starting point for a Linux experiment, not proof that an arbitrary GTK or other GUI window under Wayland can host an external SDL window. Source: [SDL build configuration](https://github.com/boykopovar/AnyPS5/blob/197ffac97203d715a258a28b432fa2eedbf8be6f/CMakeLists.txt#L68).
+
+## Remaining integration experiments
+
+| Experiment | Required result before an implementation decision |
+| --- | --- |
+| Native launch on both target systems | Launch a prepared game with a defined working directory, logs and exit status. Linux development work exists; Windows remains unverified. |
+| Library sets | Track versions, dependencies and artifact provenance without modifying original files. |
+| Local metadata | Missing or damaged JSON/images produce an understandable library fallback. |
+| Windows window integration | Input, resize, DPI, fullscreen and process exit work with the actual SDL/Vulkan window. |
+| Linux window integration | Document X11/XWayland behavior separately from any later native Wayland solution. |
+| Telemetry | Keep the connection optional; losing it must not block the game. See [Profiling](profiling.md). |
+
+External Linux launch has been checked through opening a game window in development. This does not confirm playability or the planned embedding and measurement features; the remaining experiments still need validation.

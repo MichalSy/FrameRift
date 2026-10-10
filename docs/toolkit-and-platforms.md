@@ -1,131 +1,140 @@
-# Toolkit und Zielplattformen
+<!--
+SPDX-License-Identifier: AGPL-3.0-or-later
+Copyright (C) 2026 Michal Sytko and FrameRift contributors
+Original project: https://github.com/MichalSy/FrameRift
+Additional attribution terms: see NOTICE in the repository root.
+-->
 
-[Zur Projektübersicht](../README.md) · [Spielintegration](game-window-integration.md) · [Artwork](artwork.md)
+# Toolkit and target platforms
 
-## Status und feste Anforderungen
+[Project overview](../README.md) · [Game integration](game-window-integration.md) · [Artwork](artwork.md)
 
-FrameRift ist ein geplantes eigenständiges Desktop-Frontend für eine lokale Spielebibliothek und eine separate Profiler-Ansicht. Dieses Dokument beschreibt eine Auswahlgrundlage. Es bestätigt weder eine implementierte Anwendung noch installierte oder getestete Abhängigkeiten.
+## Status and fixed requirements
 
-Festgelegt sind:
+FrameRift is a native desktop frontend for a local game library, with a separate Profiler view planned. The committed application on `main` uses **GTK4**, C++20, CMake and SQLite for the library and artwork cache. Scanning, launching, Profiler output, keyring credentials and animated heroes are development work. Embedded game windows and timing analysis remain planned.
 
-- Windows und Linux als Zielplattformen.
-- Eine native Desktop-Anwendung mit flüssigen Animationen und niedriger Hintergrundlast.
-- Eine individuelle visuelle Identität mit Graphitflächen, Cyanakzenten und großzügiger Bildwirkung.
-- Getrennte Bibliothek und Spielansicht; der Arbeitsmodus für das laufende Spiel heißt **Profiler**.
-- In der Bibliothek stehen zuletzt gespielte Spiele zuerst. Cover und Hero-Artwork kommen primär von SteamGridDB.
-- Die Oberfläche wird lokal gerendert. Ein Browser, eine WebView oder ein Webserver gehört nicht zum geplanten UI-Stack.
+This document retains the toolkit comparison as architectural background. **libadwaita is not a current dependency.** **Qt 6 Quick/QML** remains an evaluated alternative for foreign native window embedding, rather than the implemented UI stack. Windows packaging and embedded-window support are not established by the existing library.
 
-Die bisherige Arbeitsrichtung **GTK4 mit libadwaita** bleibt offen. **Qt 6 Quick/QML** ist eine ernsthafte Alternative, insbesondere für die Einbettung fremder nativer Fenster. Die Entscheidung soll aus einem kleinen Plattformvergleich hervorgehen, bevor ein vollständiges Frontend entsteht.
+Fixed requirements:
 
-## Was native Performance hier bedeutet
+- Windows and Linux as target platforms.
+- A native desktop application with smooth animation and low background load.
+- A distinct visual identity with graphite surfaces, cyan accents and prominent artwork.
+- Separate library and game views; the working mode for a running game is **Profiler**.
+- Recently played games first in the library; cover and hero artwork primarily from SteamGridDB.
+- Local UI rendering. The UI stack does not use a browser, WebView or web server.
 
-Ein Toolkitname ist kein Performance-Nachweis. Für FrameRift gelten folgende vorgeschlagene Kriterien:
+## What native performance means here
 
-1. Die Bibliothek reagiert beim Scrollen und Wechseln des ausgewählten Spiels ohne blockierende Dateizugriffe oder Netzwerkanfragen.
-2. Cover werden passend zur sichtbaren Größe dekodiert. Unsichtbare Karten und Animationen verursachen keine fortlaufende Arbeit.
-3. Ein animierter Hero wird kontrolliert dekodiert und präsentiert. Mehrere große Animationen laufen nicht automatisch gleichzeitig.
-4. Messdaten erreichen die Profiler-Ansicht in begrenzten Aktualisierungsraten. Die Oberfläche muss nicht für jedes Messereignis neu zeichnen.
-5. Der Spielprozess bleibt unabhängig vom UI-Prozess. Ein UI-Stall darf nicht die Spiellogik anhalten.
-6. CPU-, GPU- und Speicherverbrauch werden mit ruhender Bibliothek, mit Animation und während einer Messung verglichen.
+A toolkit name does not prove performance. Proposed FrameRift criteria:
 
-Für flüssige Darstellung ist das Budget der tatsächlichen Bildschirmrate maßgeblich: Ein 60-Hz-Ausgabegerät bietet ungefähr 16,7 ms pro Bild, ein 120-Hz-Gerät ungefähr 8,3 ms. Diese Werte sind Rechenbeispiele für die spätere Messung, keine zugesagten FrameRift-Ergebnisse.
+1. Scrolling and changing the selected game must not block on file access or network requests.
+2. Decode covers for their visible size. Hidden cards and animations should not cause continuous work.
+3. Decode and present animated heroes under explicit limits. Multiple large animations must not run automatically at once.
+4. Deliver measurements to Profiler at bounded update rates. The UI need not redraw for every measurement event.
+5. Keep game and UI processes independent. A UI stall must not stop game logic.
+6. Compare CPU, GPU and memory usage with an idle library, animation and active measurement.
 
-## Kandidat A: GTK4 und libadwaita
+The actual display refresh rate determines the rendering budget: approximately 16.7 ms per frame at 60 Hz and 8.3 ms at 120 Hz. These are arithmetic examples for later measurements, not promised FrameRift results.
 
-GTK4 erstellt einen GSK-Szenengraphen und besitzt Renderer für OpenGL, Vulkan und Cairo. Der Frame-Clock-Mechanismus koordiniert Eingabe, Animation, Layout und Zeichnen. Diese APIs bieten eine Grundlage für animierte lokale UI-Elemente; der tatsächlich verwendete Renderer und dessen Kosten müssen auf den Zielsystemen gemessen werden. [GTK-Zeichenmodell](https://docs.gtk.org/gtk4/drawing-model.html)
+## Current toolkit: GTK4; optional libadwaita
 
-GTK besitzt ein Win32-Backend auf Windows. Die offizielle Installationsanleitung beschreibt unter anderem MSYS2. Daraus folgt eine mögliche Windows-Buildrichtung, aber noch kein fertiges FrameRift-Paket und keine bestätigte libadwaita-Laufzeit auf jedem gewünschten Windows-System. [GTK unter Windows](https://docs.gtk.org/gtk4/windows.html), [Installation auf Windows](https://www.gtk.org/docs/installations/windows/)
+GTK4 builds a GSK scene graph and provides OpenGL, Vulkan and Cairo renderers. Its frame clock coordinates input, animation, layout and drawing. These APIs support animated local UI elements; the active renderer and its costs still require measurement on target systems. [GTK drawing model](https://docs.gtk.org/gtk4/drawing-model.html)
 
-Libadwaita liefert unter anderem Dark-Style-Verwaltung, zusätzliche Widgets, CSS-Variablen und Möglichkeiten für eigene Akzentfarben. Eigene Darstellung muss auch hohen Kontrast und lesbare Zustände berücksichtigen. Für FrameRift ist deshalb ein app-eigenes Graphit/Cyan-Design mit klar begrenzten CSS-Klassen vorgeschlagen. Interna von Standardwidgets sollten nicht großflächig überschrieben werden. [Styles und Appearance](https://gnome.pages.gitlab.gnome.org/libadwaita/doc/main/styles-and-appearance.html)
+GTK has a Win32 backend. Its official installation documentation includes MSYS2, providing a possible Windows build approach. This does not establish a finished FrameRift package or a working libadwaita runtime on every intended Windows system. [GTK on Windows](https://docs.gtk.org/gtk4/windows.html), [Windows installation](https://www.gtk.org/docs/installations/windows/)
 
-### Vorgeschlagene technische Form
+Libadwaita offers dark-style management, additional widgets, CSS variables and custom accent colors. It remains optional. Custom rendering must respect high contrast and readable states. The proposed use is an application-owned graphite/cyan design with narrowly scoped CSS classes, without broad overrides of standard-widget internals. [Styles and appearance](https://gnome.pages.gitlab.gnome.org/libadwaita/doc/main/styles-and-appearance.html)
 
-- C++20 für Bibliotheksmodell, Prozessverwaltung, Caches und Integrationsadapter.
-- GTK- und libadwaita-**C-APIs** aus C++, mit kleinen eigenen RAII-Hilfen für Lebenszeiten.
-- GLib/GObject/GIO für Eventloop, Signale, asynchrones I/O und Prozessverwaltung.
-- GTK-Builder-Ressourcen und app-eigene Styles für die Oberfläche; Detailformat erst nach der Toolkitentscheidung.
-- GTK-Listenmodelle und geeignete List-/Grid-Views für große Bibliotheken statt einer unbegrenzt wachsenden Ansammlung dauerhaft aktiver Widgets. [GtkListView](https://docs.gtk.org/gtk4/class.ListView.html)
+### Technical approach
 
-Ein C++-Wrapper für libadwaita, etwa ein angenommener `libadwaitamm`-Stack, ist **keine bestätigte Abhängigkeit**. Eine spätere Wrapperentscheidung muss Verfügbarkeit, Pflege, benötigte API-Abdeckung und Windows-Paketierung separat prüfen. Der Plan setzt keinen solchen Wrapper voraus.
+- C++20 for the library model, caches and development process-management code; integration adapters are planned.
+- GTK **C APIs** from C++, with small RAII helpers for lifetimes. Any future libadwaita use would follow the same approach.
+- GLib/GObject/GIO for the event loop, signals, asynchronous I/O and process management.
+- GTK resource bundles and application-owned styles for the UI.
+- GTK list models and suitable list/grid views are the proposed approach for large libraries, rather than unlimited permanently active widgets. [GtkListView](https://docs.gtk.org/gtk4/class.ListView.html)
 
-Die meisten GTK-Objekte dürfen nur im Hauptthread verwendet werden. Lang laufende Scans, Downloads und Dekodierung gehören in asynchrone Operationen oder Worker; Ergebnisse werden kontrolliert in den Hauptthread übernommen. [GTK-Threading](https://docs.gtk.org/gtk4/section-threading.html)
+A C++ wrapper for libadwaita, such as an assumed `libadwaitamm` stack, is **not a confirmed dependency**. Any future wrapper choice must assess availability, maintenance, API coverage and Windows packaging separately. This plan does not require one.
 
-### Offene Punkte
+Most GTK objects may only be used on the main thread. Long scans, downloads and decoding belong in asynchronous operations or workers; results must be transferred to the main thread explicitly. [GTK threading](https://docs.gtk.org/gtk4/section-threading.html)
 
-- Ein individuell gestalteter Gaming-Launcher soll nicht allein durch die Standardanordnung einer GNOME-App definiert werden. Libadwaita ist ein möglicher Baustein, kein fertiges FrameRift-Layout.
-- Windows-Paketierung einschließlich Fonts, Bilddekodern und benötigter Laufzeitbibliotheken muss auf einem sauberen Testsystem funktionieren.
-- GTK3s `GtkSocket`/`GtkPlug` waren ein X11-spezifischer Weg zur prozessübergreifenden Einbettung. Die GTK4-Planung kann diese GTK3-APIs nicht voraussetzen; ein moderner Plattformadapter oder ein anderer Bildtransport ist erforderlich. [GTK3 GtkSocket](https://docs.gtk.org/gtk3/class.Socket.html), [GTK4-API](https://docs.gtk.org/gtk4/)
-- Ein GTK-Widget als rechteckiger Platzhalter erzeugt nicht automatisch ein natives Kindfenster für SDL. Fokus, Clipping, Skalierung und Lebenszeit müssen für den konkreten Integrationsweg nachgewiesen werden.
+### Open points
 
-## Kandidat B: Qt 6 Quick/QML
+- A custom gaming launcher should not be defined solely by a standard GNOME application layout. Libadwaita is an optional building block, not a complete FrameRift layout.
+- Windows packaging, including fonts, image decoders and runtime libraries, must work on a clean test system.
+- GTK3's `GtkSocket`/`GtkPlug` supported cross-process embedding specifically on X11. GTK4 cannot assume these GTK3 APIs; it needs a modern platform adapter or another image transport. [GTK3 GtkSocket](https://docs.gtk.org/gtk3/class.Socket.html), [GTK4 API](https://docs.gtk.org/gtk4/)
+- A rectangular GTK placeholder does not automatically create a native child window for SDL. Focus, clipping, scaling and lifetimes need validation for the selected integration path.
 
-Qt Quick stellt eine lokal gerenderte Szenengraph-Oberfläche bereit. Qt 6 verwendet verschiedene native Grafik-Backends über seine Rendering-Abstraktion. QML beschreibt UI-Struktur, Zustände und Animationen; C++ kann das Daten- und Integrationsmodell liefern. **Qt Quick/QML ist keine Weboberfläche.** Das gesonderte Chromium-basierte Qt-WebEngine-Modul ist für FrameRift nicht vorgesehen. [Qt-Graphics](https://doc.qt.io/qt-6/topics-graphics.html), [Qt-Quick-Szenengraph](https://doc.qt.io/qt-6/qtquick-visualcanvas-scenegraph.html), [Qt-WebEngine-Abgrenzung](https://doc.qt.io/qt-6/qtwebengine-overview.html)
+## Evaluated alternative: Qt 6 Quick/QML
 
-Die relevante Besonderheit ist `QWindow::fromWinId()`: Qt kann eine lokale Darstellung eines fremden nativen Fensters erstellen, auch wenn dieses aus einem anderen Prozess stammt. Die Unterstützung hängt vom Plattformplugin ab und kann fehlschlagen. Qt übernimmt dabei keine allgemeine Zustandsbeobachtung des fremden Fensters. [QWindow::fromWinId](https://doc.qt.io/qt-6/qwindow.html#fromWinId)
+Qt Quick provides a locally rendered scene-graph UI. Qt 6 uses native graphics backends through its rendering abstraction. QML describes UI structure, states and animation; C++ can provide data and integration models. **Qt Quick/QML is not a web UI.** The separate Chromium-based Qt WebEngine module is not planned for FrameRift. [Qt graphics](https://doc.qt.io/qt-6/topics-graphics.html), [Qt Quick scene graph](https://doc.qt.io/qt-6/qtquick-visualcanvas-scenegraph.html), [Qt WebEngine overview](https://doc.qt.io/qt-6/qtwebengine-overview.html)
 
-Seit Qt 6.8 gibt es `WindowContainer` in Qt Quick. Das Element verwaltet die Geometrie eines eingebetteten `QWindow`. Das Kindfenster liegt jedoch über der Quick-Szene; gewöhnliche QML-Items können es nicht automatisch überlagern. Für FrameRift spricht das für Profiler-Panels neben und unter dem Spielfeld, während ein Overlay im Spielfeld einen gesonderten Nachweis braucht. [WindowContainer](https://doc.qt.io/qt-6/qml-qtquick-windowcontainer.html)
+The relevant feature is `QWindow::fromWinId()`, which can create a local representation of a foreign native window, including one from another process. Support depends on the platform plugin and may fail. Qt does not provide general state monitoring of that foreign window. [QWindow::fromWinId](https://doc.qt.io/qt-6/qwindow.html#fromWinId)
 
-### Vorgeschlagene technische Form
+Qt Quick has provided `WindowContainer` since Qt 6.8. It manages the geometry of an embedded `QWindow`, but the child window sits above the Quick scene. Ordinary QML items cannot automatically overlay it. This favors Profiler panels beside and below the game area; overlays within that area require separate validation. [WindowContainer](https://doc.qt.io/qt-6/qml-qtquick-windowcontainer.html)
 
-- C++20 für das gemeinsame Fachmodell und Plattformadapter.
-- QML/Qt Quick für Bibliothek, Moduswechsel und Profiler-Panels.
-- App-eigene Qt-Quick-Controls-Komponenten für Graphit/Cyan statt ausschließlich eines Standardstyles. [Qt Quick Controls anpassen](https://doc.qt.io/qt-6/qtquickcontrols-customize.html)
-- Qt Core/Gui/Quick/Qml und bei Bedarf Network als Kandidaten für die Laufzeit.
-- Keine zusätzliche GLib-Hauptschleife allein aus Gewohnheit: Bei einer Qt-Entscheidung werden Prozess-, Netzwerk- und Eventloop-Abstraktionen passend zum Qt-Stack bewertet.
+### Proposed technical approach if selected
 
-### Offene Punkte
+- C++20 for the shared domain model and platform adapters.
+- QML/Qt Quick for the library, mode changes and Profiler panels.
+- Application-owned Qt Quick Controls components for graphite/cyan styling. [Customizing Qt Quick Controls](https://doc.qt.io/qt-6/qtquickcontrols-customize.html)
+- Qt Core/Gui/Quick/Qml and, if needed, Network as runtime candidates.
+- Use process, network and event-loop abstractions appropriate to Qt; do not add another GLib main loop solely by convention.
 
-- Die bequeme API ersetzt keine Windows-/X11-/Wayland-Prüfung.
-- Ein fremdes Fenster ist keine Textur in der UI-Szene; Transformationen, Rundungen und Überlagerungen gelten nicht automatisch für den Spielinhalt.
-- Animiertes WebP muss mit den tatsächlich ausgelieferten Bildplugins und ihrer Animation-Unterstützung geprüft werden.
-- Benötigte Qt-Module, Plugins, Laufzeitverteilung und deren jeweilige Lizenzbedingungen werden vor der finalen Auswahl festgelegt. [Qt-Lizenzübersicht](https://doc.qt.io/qt-6/licensing.html)
+### Open points
 
-## Vergleich für die Entscheidung
+- The convenient API still requires Windows/X11/Wayland validation.
+- A foreign window is not a texture in the UI scene. Transformations, rounded corners and overlays do not automatically apply to game content.
+- Animated WebP needs testing with the distributed image plugins and their animation support.
+- Define required Qt modules, plugins, runtime distribution and their license terms before selecting this alternative. [Qt licensing overview](https://doc.qt.io/qt-6/licensing.html)
 
-| Kriterium | GTK4 + libadwaita | Qt 6 Quick/QML |
+## Architectural comparison
+
+| Criterion | GTK4, optionally libadwaita | Qt 6 Quick/QML |
 |---|---|---|
-| Bisherige Arbeitsrichtung | Ausgangspunkt der bisherigen UI-Idee | Vollwertige Alternative |
-| Individuelles Graphit/Cyan-Design | Eigene Widgets/Styles; libadwaita gezielt nutzen | Eigene Quick-Controls und Komponenten |
-| Lokale Animationen | Frame-Clock/GSK; tatsächlichen Renderer messen | Quick-Szenengraph; tatsächlichen Backend messen |
-| Windows | Win32-Backend dokumentiert; Paketierung offen | Zielplattform und Plugin-Paketierung prüfen |
-| Linux | X11 und Wayland getrennt prüfen | XCB und Wayland getrennt prüfen |
-| Fremdes Windows-/X11-Fenster | Eigener Plattformweg mit höherem Nachweisaufwand | `fromWinId` + `WindowContainer` als konkreter Kandidat |
-| Fremdes natives Wayland-Fenster | Kein pauschaler Reparent-Weg | Auch Qt hebt Wayland-Grenzen nicht auf |
-| C++-API-Plan | GTK/libadwaita-C-API aus C++; Wrapper offen | Qt-C++-API plus QML |
-| Entscheidung | Noch offen | Noch offen |
+| Project role | Implemented library toolkit; libadwaita optional | Evaluated alternative |
+| Custom graphite/cyan design | Custom widgets/styles; selective libadwaita use if adopted | Custom Quick Controls and components |
+| Local animation | Frame clock/GSK; measure actual renderer | Quick scene graph; measure actual backend |
+| Windows | Win32 backend documented; packaging open | Validate target platform and plugin packaging |
+| Linux | Test X11 and Wayland separately | Test XCB and Wayland separately |
+| Foreign Windows/X11 window | Custom platform path with more validation work | `fromWinId` + `WindowContainer` as a concrete candidate |
+| Foreign native Wayland window | No universal reparenting path | Qt also remains subject to Wayland limits |
+| C++ API approach | GTK C APIs from C++; libadwaita and wrappers optional | Qt C++ API plus QML |
+| Current adoption | GTK4 used for the library | Not adopted |
 
-Die Einträge sind eine technische Bewertung für FrameRift. Sie sind keine Rangfolge der Verbreitung, keine Benchmark-Ergebnisse und keine Zusage, dass ein komplettes Einbetten auf allen Plattformen gelingt.
+This is a technical assessment for FrameRift, not a popularity ranking, benchmark result or guarantee of embedding on all platforms.
 
-## Abhängigkeiten und Buildrichtung
+## Dependencies and build approach
 
-**C++20, CMake und Ninja sind eine plausible Arbeitsannahme.** Noch gibt es daraus keine implementierte Buildkonfiguration, keinen Lockfile und keine festgelegte Mindestversion. CMake unterstützt die Anforderung von C++20; die finale Konfiguration soll eine unerwünschte Herabstufung des Standards verhindern. [CMake CXX_STANDARD](https://cmake.org/cmake/help/latest/prop_tgt/CXX_STANDARD.html), [CMake Ninja-Generator](https://cmake.org/cmake/help/latest/generator/Ninja.html)
+The committed build requires **C++20**, **CMake 3.20 or newer**, GTK4 4.12 or newer, libcurl 7.85 or newer, JSON-GLib, SQLite3, pkg-config and `glib-compile-resources`. C++20 is requested through compile features with language extensions disabled. Ninja is the documented build generator. The development working tree adds VTE, GIO, libsecret and libwebp; these additions are not yet part of committed `main`. [CMake CXX_STANDARD](https://cmake.org/cmake/help/latest/prop_tgt/CXX_STANDARD.html), [CMake Ninja generator](https://cmake.org/cmake/help/latest/generator/Ninja.html)
 
-| Bestandteil | Status | Vorgesehener Zweck | Vor Festlegung nachzuweisen |
+| Component | Status | Purpose | Remaining validation |
 |---|---|---|---|
-| C++20-Compiler | Kandidat | Gemeinsamer Kern und Adapter | Windows-/Linux-Toolchains und Warnungsregeln |
-| CMake + Ninja | Kandidat | Build und reproduzierbare Konfiguration | Mindestversion, Presets und Paketierung |
-| GTK4 | Toolkit-Kandidat | Native Oberfläche | Renderer, Windows-Paket und Fensteradapter |
-| libadwaita | Zusatz zum GTK-Kandidaten | Widgets, Styles und Animationen | Exakte APIs, stabile Version und Windows-Verteilung |
-| GLib/GIO | Zum GTK-Weg geplant | Eventloop, Dateien und Prozesse | Benötigte APIs und asynchrone Lebenszeiten |
-| GTK-/libadwaita-C++-Wrapper | Nicht vorausgesetzt | Optionale API-Ergonomie | Pflege, API-Abdeckung und Zusatzkosten |
-| Qt 6 Quick/QML | Alternativer Toolkit-Kandidat | Eigene UI und Fenstercontainer | Version ab 6.8 bei Nutzung von WindowContainer; Plattformtests |
-| libwebp / Animationsdecoder | Kandidat | Animierte Hero-Bilder | Dekodierung, Speichergrenzen und Paketierung |
-| HTTP-/JSON-Bibliothek | Noch auszuwählen | SteamGridDB und Metadaten | Auswahl passend zum Toolkit; asynchron und begrenzt |
-| SQLite oder anderes lokales Speicherformat | Noch auszuwählen | Bibliothek, Zuordnung und Verlauf | Migration, Crash-Verhalten und lokale Datenhaltung |
-| SDL/Vulkan im Frontend | Keine pauschale Abhängigkeit | Nur bei nachgewiesenem Integrationsbedarf | Frontend ist nicht der Renderer des Spielprozesses |
+| C++20 compiler | Current | Library core; development runtime | Windows/Linux toolchains and warning rules |
+| CMake + Ninja | Current build approach | Build and reproducible configuration | Presets and packaging |
+| GTK4 | Current | Native UI | Renderer, Windows package and window adapter |
+| libadwaita | Optional | Widgets, styles and animation | Exact APIs, stable version and Windows distribution |
+| GLib/GIO | GTK foundation; explicit GIO dependency in development | Event loop, files and processes | Required APIs and asynchronous lifetimes |
+| GTK/libadwaita C++ wrappers | Not assumed | Optional API ergonomics | Maintenance, API coverage and additional costs |
+| Qt 6 Quick/QML | Evaluated alternative | Custom UI and window containers | Qt 6.8+ for WindowContainer; platform tests |
+| libwebp / animation decoder | Development | Animated heroes | Decoding, memory limits and packaging |
+| libcurl + JSON-GLib | Current | SteamGridDB and metadata | Bounded asynchronous work |
+| SQLite | Current | Library, artwork mapping and history | Migration and crash behavior |
+| VTE | Development | Profiler output | Bounded scrollback and packaging |
+| libsecret | Development | Artwork credentials in the desktop keyring | Keyring availability and reads outside the UI thread |
+| SDL/Vulkan in the frontend | Not an assumed dependency | Only for validated integration needs | The frontend is not the game renderer |
 
-Eine Abhängigkeit im Spielprozess ist nicht automatisch eine Abhängigkeit des Frontends. Die Verbindung erfolgt über ein kleines, versioniertes Protokoll und plattformspezifische Integrationsdaten; siehe [Spielintegration](game-window-integration.md).
+A game-process dependency is not automatically a frontend dependency. The planned integration uses a small versioned protocol and platform-specific data; see [Game integration](game-window-integration.md).
 
-## Vorgeschlagene Auswahlprüfung
+## Proposed platform validation
 
-Vor produktiver UI-Implementierung sollen beide Kandidaten dieselbe kleine Referenz erfüllen:
+Before committing to embedded game rendering, assess the current toolkit and any proposed alternative against the same small reference:
 
-1. Bibliothek mit realistischen Covergrößen, zuletzt gespielten Spielen zuerst und einem animierten Hero.
-2. Profiler-Layout mit einem großen Spielfeld, Analyse rechts und Messdaten unten.
-3. Externer kooperativer SDL-Testprozess unter Windows und Linux/X11.
-4. Größenänderung, Fensterwechsel, DPI-Wechsel und Fokuswechsel zwischen Spiel und Profiler-Bedienelementen.
-5. Ein- und Ausstieg aus dem Profiler, normaler Spielabschluss und unerwartetes Prozessende.
-6. Expliziter Wayland-Test mit dokumentiertem Ergebnis und funktionierender externer Fensterdarstellung.
-7. Sauberes Windows-Paket und eine festgelegte Linux-Paketierungsprobe.
+1. Library with realistic cover sizes, recently played games first and an animated hero.
+2. Profiler layout with a large game area, analysis on the right and measurements below.
+3. External cooperative SDL test process on Windows and Linux/X11.
+4. Resize, window changes, DPI changes and focus transitions between game and Profiler controls.
+5. Entering and leaving Profiler, normal game exit and unexpected process termination.
+6. Explicit Wayland test with documented results and a working external game window.
+7. Clean Windows package and a defined Linux packaging trial.
 
-Erst danach werden Toolkit, Mindestversionen, aktive Renderer und die Reihenfolge der Integrationswege beschlossen. Reine Bibliotheks-Animationen sind ein eigener Test; eine funktionierende Bibliothek beweist noch keine fehlerfreie Einbettung des Spiels.
+Use the results to decide embedding paths, any toolkit change, required versions and active renderers. Library animation is a separate test; a working library does not prove reliable game embedding.

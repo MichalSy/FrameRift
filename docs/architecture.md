@@ -9,18 +9,18 @@ Additional attribution terms: see NOTICE in the repository root.
 
 ## Implementation status
 
-Committed `main` contains the GTK4 game library, search, sorting, recently played games, a SQLite cache and SteamGridDB artwork. The following details describe current development work, including changes that are not yet on `main`:
+FrameRift implements a GTK4 game library with search, sorting, recently played games, automatic folder scanning, a SQLite/artwork cache and animated heroes. It also provides Settings, Linux launch/rebuild and a Profiler console:
 
 - `src/library` owns game metadata, folder scanning, SQLite access and SteamGridDB requests through libcurl and JSON-GLib. Scans read stable IDs and localized titles from `sce_sys/param.json`, stop at recognized game directories and preserve existing artwork and play history.
 - SQLite schema 3 stores configured game folders, installation paths, SteamGridDB IDs, public source pages and artwork paths. Runtime settings use the existing metadata table: AnyPS5 folder, complete compatible patched runtime directory and relinker executable. Installed artwork replaces demo records transactionally after successful loading; user records remain intact.
 - `src/ui/app.cpp` connects library selection, search, Settings, Play and tab navigation. `src/ui/profiler` owns an output-only VTE console with bounded scrollback; `src/runtime/log` captures the merged process pipe asynchronously, writes the complete raw log and forwards bounded chunks to the UI. Process completion waits for output to drain. No shell, PTY or file polling is involved. Background tasks handle scanning, downloads and conversion; GTK callbacks update the UI.
 - `src/ui/hero` owns banner rendering and WebP playback through libwebpdemux. A GTK tick advances the visible selected animation and the selection crossfade; hidden widgets and disabled GTK animations pause playback. Compressed data, the decoder and the current Cairo frame have explicit ownership; selection keeps only one previous frame for fading.
-- `src/runtime` prepares generated code and launches games on Linux through GIO subprocesses. A missing `game.elf` triggers background relinking of the original `eboot.bin` with `--to-intel`; generated executables and modules live in the cache under `framerift/games/<game-id>/`. Existing output is reused. The modified AnyPS5 fork's `tools/run_game.py` launcher passes the original resource directory separately from generated code and the shared runtime.
+- `src/runtime` prepares generated code and launches games on Linux through GIO subprocesses. A missing `game.elf` triggers background relinking of the original `eboot.bin` with `--to-intel` and `--recursive-module-search`; generated executables and modules live in the cache under `framerift/games/<game-id>/`. Existing output is reused. The modified AnyPS5 fork's `tools/run_game.py` launcher passes the original resource directory separately from generated code and the shared runtime.
 - Rebuild uses the same preparation pipeline with forced conversion, clears generated code for one stable game ID and preserves runtime data and shader caches. It does not spawn the game or update play history. The Profiler shows the result and a bounded conversion-log tail, including converter failures; the full log remains on disk.
-- The game runs in a separate process and its own window. FrameRift observes process exit, records the last-played timestamp after spawning and writes `conversion.log` plus `game.log` under the shared user data directory at `framerift/logs/<game-id>/<session-id>/`.
-- `assets/ui` is embedded as GResources. Game artwork comes from the API and is cached outside the repository. Two small CTest checks, `library_cache` and `game_launch`, cover persistence, scanning, migration, settings and the launch flow without a test framework.
+- The game runs in a separate process and its own window. Its persistent working directory is `framerift/saves/<game-id>/` under the user data directory; AnyPS5 save trees and runtime data stay separate from generated code. FrameRift observes process exit, records the last-played timestamp after spawning and writes `conversion.log` plus `game.log` at `framerift/logs/<game-id>/<session-id>/` under the same data root.
+- `assets/ui` is embedded as GResources. Game artwork comes from the API and is cached outside the repository. Small CTest checks, `library_cache` and `game_launch`, cover persistence, scanning, migration, settings and the launch flow without a test framework. CMake installs the executable; on Linux it also installs a desktop menu entry and app icon.
 
-The development scope is the library, external Linux launch and the Profiler console. Native UI checks include reaching an external game window; this does not confirm playability. Settings saves the artwork API key through libsecret in the desktop keyring; `STEAMGRIDDB_API_KEY` overrides it. Keyring access and downloads run in background tasks; the key is excluded from game process environments. Window embedding, timing tools and telemetry remain planned. The following sections describe the target architecture; build commands and release status are in the [README](../README.md).
+The implemented scope is the library, external Linux launch and the Profiler console. Native UI checks include reaching an external game window; this does not confirm playability. Settings saves the artwork API key through libsecret in the desktop keyring; `STEAMGRIDDB_API_KEY` overrides it. Keyring access and downloads run in background tasks; the key is excluded from game process environments. Window embedding, timing tools and telemetry remain planned. The following sections describe the target architecture; build commands and release status are in the [README](../README.md).
 
 ## Target design
 
@@ -56,11 +56,11 @@ Dashed relationships depend particularly on the runtime or platform. Window host
 
 ### Library model
 
-The model manages games independently of UI components. A future entry could contain an internal ID, available title metadata, the executable output, game directory, launch profiles, artwork mappings and last-launch time. A title ID can help identify different outputs of the same game, but does not distinguish separate builds by itself. The development scanner currently uses the metadata title ID as its stable library ID; separate identities for multiple installations remain a proposal.
+The model manages games independently of UI components. A future entry could contain an internal ID, available title metadata, the executable output, game directory, launch profiles, artwork mappings and last-launch time. A title ID can help identify different outputs of the same game, but does not distinguish separate builds by itself. The scanner currently uses the metadata title ID as its stable library ID; separate identities for multiple installations remain a proposal.
 
 A game could have several launch profiles, such as a normal launch and an instrumented build. FrameRift must make the selected executable clear rather than silently choosing an arbitrary file in the directory.
 
-The development scanner works in the background and reports changes to the model. Large directory trees and damaged metadata must not block the UI. Explicit selection and metadata validation remain useful import steps. Filesystem watchers would be a convenience feature, not a substitute for a reproducible import.
+The scanner works in the background and reports changes to the model. Large directory trees and damaged metadata must not block the UI. Explicit selection and metadata validation remain useful import steps. Filesystem watchers would be a convenience feature, not a substitute for a reproducible import.
 
 ### Game Runner
 
@@ -68,7 +68,7 @@ The runner turns a launch configuration into a structured request: program, argu
 
 Programs and arguments are passed separately to the process API. User paths are not assembled into shell commands. Errors such as a missing executable, unsuitable working directory or missing runtime dependency are explained using the actual launch context.
 
-The development implementation also relinks missing generated code and supports an explicit Rebuild action. Conversion runs as a background task with its own log. Reusing an existing game executable remains a simple launch path; richer build progress and cancellation are possible later extensions.
+The implementation also relinks missing generated code and supports an explicit Rebuild action. Conversion runs as a background task with its own log. Reusing an existing game executable remains a simple launch path; richer build progress and cancellation are possible later extensions.
 
 ### Window Host
 
@@ -123,7 +123,7 @@ Later AnyPS5 changes should be small and independently verifiable: optional tele
 
 ## Source layout
 
-The development tree contains these implemented areas; `main` currently contains the library and its UI, without the runtime additions:
+The source tree contains these implemented areas:
 
 ```text
 src/

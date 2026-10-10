@@ -13,7 +13,7 @@ Additional attribution terms: see NOTICE in the repository root.
 
 FrameRift is intended to display a running game from a **separate process** in its Profiler view. The desired layout has a large game area, frame analysis on the right and measurements below. Embedded rendering is planned and requires platform-specific validation; it is not a proven product feature.
 
-The committed application on `main` provides the library and artwork cache. Process launching and a Profiler output view are development work. The architecture must also support an external game window so that launching, process management and profiling remain usable when a system or game build cannot embed reliably.
+The application provides the library, artwork cache, external Linux launch/rebuild and a Profiler output view. The architecture must also support an external game window so that launching, process management and profiling remain usable when a system or game build cannot embed reliably.
 
 ## Basic model and ownership
 

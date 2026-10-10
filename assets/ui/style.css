@@ -10,18 +10,20 @@ button { box-shadow: none; text-shadow: none; }
 .topbar { min-height: 56px; padding: 0 0 0 28px; background: linear-gradient(100deg, #0c1823, #102739 70%, #0b141e); border-bottom: 1px solid #2a4458; }
 .brand { font-size: 22px; font-weight: 700; margin-left: 9px; }
 .topbar separator { background: #345167; margin: 16px 22px; }
-.nav-tab { min-height: 0; border: none; background: transparent; border-radius: 0; font-weight: 600; font-size: 15px; padding: 17px 9px 14px; border-bottom: 3px solid #00d7e9; }
+.nav-tab { min-height: 0; border: none; background: transparent; border-radius: 0; font-weight: 600; font-size: 15px; padding: 17px 9px 14px; border-bottom: 3px solid transparent; }
+.nav-tab.active { border-bottom-color: #00d7e9; }
 .game-search { background: #122637; border: 1px solid #345267; border-radius: 5px; min-height: 34px; color: #e6f0f6; box-shadow: none; }
 .game-search > text { color: #e6f0f6; background: transparent; }
 .toolbar-action { min-height: 32px; border: 1px solid #344d5f; background: #152635; padding: 0 13px; border-radius: 5px; }
 .toolbar-action:disabled { color: #8097a8; }
-.hero { background: #102c53; min-height: 260px; }
-.hero-scrim { background: linear-gradient(90deg, rgba(8,20,28,.98) 0%, rgba(8,20,28,.91) 27%, rgba(8,20,28,.28) 57%, rgba(8,20,28,0) 80%), linear-gradient(0deg, rgba(7,18,26,.3), transparent 55%); }
+.hero { background: #08141c; min-height: 320px; }
+.hero-scrim { background: linear-gradient(0deg, #0b161e, transparent 38%); }
 .hero-content { padding: 28px 64px 24px; }
 .hero-title { font-size: 58px; font-weight: 900; letter-spacing: -2px; color: white; }
 .hero-actions { margin-top: 18px; }
 .play-button { background: linear-gradient(120deg, #00d1e8, #00a6ec); color: #05131c; border: 1px solid #37daf1; border-radius: 5px; font-size: 17px; font-weight: 700; min-height: 44px; padding: 0 26px; }
 .play-button:hover { background: #4ee0f3; }
+.rebuild-button { min-height: 44px; padding: 0 20px; background: rgba(18,38,55,.92); font-size: 15px; }
 .collection { padding: 28px 0 36px; }
 .section-header { margin: 0 48px; }
 .section-heading { font-size: 24px; font-weight: 700; }
@@ -37,6 +39,7 @@ button { box-shadow: none; text-shadow: none; }
 .sort-picker { min-height: 40px; background: #122331; border-radius: 4px; font-size: 14px; }
 .sort-picker > button { min-height: 36px; padding: 0 14px; background: #122b3e; color: #c4d6e5; border: 1px solid #31475a; }
 .empty-state { padding: 28px; color: #a4bbcc; font-size: 16px; }
+.folder-settings { padding: 24px; }
 .window-buttons { margin: 0; padding: 0; border-spacing: 0; }
 .art-frame picture { transform: scale(1); transition: transform 200ms ease-out; }
 .game-card:hover .art-frame picture { transform: scale(1.045); }
@@ -46,3 +49,9 @@ button { box-shadow: none; text-shadow: none; }
 .window-buttons button > image { min-width: 16px; min-height: 16px; padding: 0; margin: 0; border: none; border-radius: 0; background: none; box-shadow: none; -gtk-icon-shadow: none; }
 .window-buttons button:hover { background: rgba(255,255,255,.1); }
 .window-buttons button.close:hover { background: #c73d50; }
+.profiler-page { padding: 32px 48px 40px; background: #0b161e; }
+.profiler-title { font-size: 28px; font-weight: 700; }
+.profiler-status { color: #9aeeff; font-size: 13px; padding: 7px 13px; border-radius: 16px; background: #122c3a; }
+.console-frame { border: 1px solid #2c4455; border-radius: 7px; background: #08121a; }
+.profiler-console { padding: 14px 16px; }
+.console-empty { color: #8fa8ba; font-size: 15px; }

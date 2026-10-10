@@ -15,7 +15,7 @@ Additional attribution terms: see NOTICE in the repository root.
 | Audience | Players and users investigating game performance |
 | Platforms | Native Windows and Linux desktop application; Linux is the current development platform |
 | UI | Custom, modern and compact, with dark graphite surfaces, cyan accents and restrained animations |
-| Views | Library first; a Profiler console is in development, with an embedded game/profiler view planned |
+| Views | Library and Profiler console implemented; an embedded game/profiler view is planned |
 | Library | Selected-game hero, then **Recently played**, then **Your games** |
 | Planned game view | Game at the center, with optional analysis panels |
 | Planned game-view modes | **Playing** and **Profiler** |
@@ -48,7 +48,7 @@ GTK4 is implemented; optional dependencies and embedding approaches remain propo
 - Which CPU/GPU measurement points should the first timing profiler provide? What does a frame ID mean across multiple submissions and delayed GPU results?
 - What overhead is acceptable for each measurement mode, and how should comparisons be reproduced?
 - Which capture and export formats should come first? Image capture is an additional data source with its own costs.
-- Can the development WebP animation path be verified reliably and efficiently on Windows?
+- Can the implemented WebP animation path be verified reliably and efficiently on Windows?
 - How should multiple game outputs, builds and launch profiles be imported and displayed with minimal complexity?
 - How should manual artwork selection work, and how should desktop-keyring settings be packaged on Windows?
 - What distribution requirements apply to the dependency licenses? AnyPS5 stays separately licensed under GPL-2.0-only; VTE uses LGPL-3.0-or-later.

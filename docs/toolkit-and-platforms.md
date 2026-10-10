@@ -11,7 +11,7 @@ Additional attribution terms: see NOTICE in the repository root.
 
 ## Status and fixed requirements
 
-FrameRift is a native desktop frontend for a local game library, with a separate Profiler view planned. The committed application on `main` uses **GTK4**, C++20, CMake and SQLite for the library and artwork cache. Scanning, launching, Profiler output, keyring credentials and animated heroes are development work. Embedded game windows and timing analysis remain planned.
+FrameRift is a native desktop frontend with a local game library and a separate Profiler console. The application uses **GTK4**, C++20, CMake and SQLite for the library and artwork cache. Automatic scanning, Linux launch/rebuild, Profiler output, keyring credentials and animated heroes are implemented. Embedded game windows and timing analysis remain planned.
 
 This document retains the toolkit comparison as architectural background. **libadwaita is not a current dependency.** **Qt 6 Quick/QML** remains an evaluated alternative for foreign native window embedding, rather than the implemented UI stack. Windows packaging and embedded-window support are not established by the existing library.
 
@@ -47,7 +47,7 @@ Libadwaita offers dark-style management, additional widgets, CSS variables and c
 
 ### Technical approach
 
-- C++20 for the library model, caches and development process-management code; integration adapters are planned.
+- C++20 for the library model, caches and process-management code; integration adapters are planned.
 - GTK **C APIs** from C++, with small RAII helpers for lifetimes. Any future libadwaita use would follow the same approach.
 - GLib/GObject/GIO for the event loop, signals, asynchronous I/O and process management.
 - GTK resource bundles and application-owned styles for the UI.
@@ -105,22 +105,22 @@ This is a technical assessment for FrameRift, not a popularity ranking, benchmar
 
 ## Dependencies and build approach
 
-The committed build requires **C++20**, **CMake 3.20 or newer**, GTK4 4.12 or newer, libcurl 7.85 or newer, JSON-GLib, SQLite3, pkg-config and `glib-compile-resources`. C++20 is requested through compile features with language extensions disabled. Ninja is the documented build generator. The development working tree adds VTE, GIO, libsecret and libwebp; these additions are not yet part of committed `main`. [CMake CXX_STANDARD](https://cmake.org/cmake/help/latest/prop_tgt/CXX_STANDARD.html), [CMake Ninja generator](https://cmake.org/cmake/help/latest/generator/Ninja.html)
+The build requires **C++20**, **CMake 3.20 or newer**, GTK4 4.12 or newer, GTK4 VTE 0.70 or newer, libcurl 7.85 or newer, JSON-GLib, SQLite3, GIO, libsecret, libwebp/libwebpdemux, pkg-config and `glib-compile-resources`. Game launch also requires Python 3. C++20 is requested through compile features with language extensions disabled. Ninja is the documented build generator. CMake installs the executable and, on Linux, a desktop menu entry and icon under the configured prefix. [CMake CXX_STANDARD](https://cmake.org/cmake/help/latest/prop_tgt/CXX_STANDARD.html), [CMake Ninja generator](https://cmake.org/cmake/help/latest/generator/Ninja.html)
 
 | Component | Status | Purpose | Remaining validation |
 |---|---|---|---|
-| C++20 compiler | Current | Library core; development runtime | Windows/Linux toolchains and warning rules |
+| C++20 compiler | Current | Library core and runtime | Windows/Linux toolchains and warning rules |
 | CMake + Ninja | Current build approach | Build and reproducible configuration | Presets and packaging |
 | GTK4 | Current | Native UI | Renderer, Windows package and window adapter |
 | libadwaita | Optional | Widgets, styles and animation | Exact APIs, stable version and Windows distribution |
-| GLib/GIO | GTK foundation; explicit GIO dependency in development | Event loop, files and processes | Required APIs and asynchronous lifetimes |
+| GLib/GIO | Current | Event loop, files and processes | Required APIs and asynchronous lifetimes |
 | GTK/libadwaita C++ wrappers | Not assumed | Optional API ergonomics | Maintenance, API coverage and additional costs |
 | Qt 6 Quick/QML | Evaluated alternative | Custom UI and window containers | Qt 6.8+ for WindowContainer; platform tests |
-| libwebp / animation decoder | Development | Animated heroes | Decoding, memory limits and packaging |
+| libwebp / animation decoder | Current | Animated heroes | Decoding, memory limits and packaging |
 | libcurl + JSON-GLib | Current | SteamGridDB and metadata | Bounded asynchronous work |
 | SQLite | Current | Library, artwork mapping and history | Migration and crash behavior |
-| VTE | Development | Profiler output | Bounded scrollback and packaging |
-| libsecret | Development | Artwork credentials in the desktop keyring | Keyring availability and reads outside the UI thread |
+| VTE | Current | Profiler output | Bounded scrollback and packaging |
+| libsecret | Current | Artwork credentials in the desktop keyring | Keyring availability and reads outside the UI thread |
 | SDL/Vulkan in the frontend | Not an assumed dependency | Only for validated integration needs | The frontend is not the game renderer |
 
 A game-process dependency is not automatically a frontend dependency. The planned integration uses a small versioned protocol and platform-specific data; see [Game integration](game-window-integration.md).

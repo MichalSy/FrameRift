@@ -7,9 +7,11 @@
 
 #include <curl/curl.h>
 #include <json-glib/json-glib.h>
+#include <libsecret/secret.h>
 
 #include <array>
 #include <chrono>
+#include <fstream>
 #include <memory>
 #include <optional>
 #include <stdexcept>
@@ -18,8 +20,70 @@
 namespace framerift {
 namespace {
 
-constexpr std::size_t maximum_body = 20 * 1024 * 1024;
+constexpr std::size_t maximum_body = 64 * 1024 * 1024;
 constexpr const char* api_base = "https://www.steamgriddb.com/api/v2";
+
+bool valid_api_key(const std::string& key) {
+    return !key.empty() && key.find_first_of("\r\n") == std::string::npos &&
+        key.find('\0') == std::string::npos && g_utf8_validate(key.c_str(), -1, nullptr);
+}
+
+const SecretSchema api_key_schema = [] {
+    SecretSchema schema{};
+    schema.name = "io.github.framerift.SteamGridDB";
+    schema.flags = SECRET_SCHEMA_NONE;
+    schema.attributes[0] = {"provider", SECRET_SCHEMA_ATTRIBUTE_STRING};
+    return schema;
+}();
+
+// A private context keeps the cancellation deadline independent of the UI loop.
+std::string access_keyring(const std::string* key) {
+    const std::unique_ptr<GMainContext, decltype(&g_main_context_unref)> context(
+        g_main_context_new(), g_main_context_unref);
+    const std::unique_ptr<GMainLoop, decltype(&g_main_loop_unref)> loop(
+        g_main_loop_new(context.get(), false), g_main_loop_unref);
+    const std::unique_ptr<GCancellable, decltype(&g_object_unref)> cancellable(
+        g_cancellable_new(), g_object_unref);
+    const std::unique_ptr<GSource, decltype(&g_source_unref)> timeout(
+        g_timeout_source_new(10000), g_source_unref);
+    struct Request {
+        GMainLoop* loop;
+        bool saving;
+        bool saved = false;
+        std::unique_ptr<gchar, decltype(&secret_password_free)> password{nullptr, secret_password_free};
+        GError* error = nullptr;
+    } request{loop.get(), key != nullptr};
+
+    g_source_set_callback(timeout.get(), +[](gpointer data) noexcept -> gboolean {
+        g_cancellable_cancel(static_cast<GCancellable*>(data));
+        return G_SOURCE_REMOVE;
+    }, cancellable.get(), nullptr);
+    g_source_attach(timeout.get(), context.get());
+    g_main_context_push_thread_default(context.get());
+    const auto complete = +[](GObject*, GAsyncResult* result, gpointer data) noexcept {
+        auto& request = *static_cast<Request*>(data);
+        if (request.saving) request.saved = secret_password_store_finish(result, &request.error);
+        else request.password.reset(secret_password_lookup_finish(result, &request.error));
+        g_main_loop_quit(request.loop);
+    };
+    if (key) {
+        secret_password_store(&api_key_schema, SECRET_COLLECTION_DEFAULT, "FrameRift SteamGridDB API key",
+            key->c_str(), cancellable.get(), complete, &request, "provider", "steamgriddb", nullptr);
+    } else {
+        secret_password_lookup(&api_key_schema, cancellable.get(), complete, &request,
+            "provider", "steamgriddb", nullptr);
+    }
+    g_main_loop_run(loop.get());
+    g_main_context_pop_thread_default(context.get());
+    g_source_destroy(timeout.get());
+    const bool failed = request.error || (key && !request.saved);
+    g_clear_error(&request.error);
+    if (failed) {
+        if (key) throw std::runtime_error("Could not save the SteamGridDB API key in the system keyring");
+        return {};
+    }
+    return request.password ? request.password.get() : std::string{};
+}
 
 struct CurlRuntime {
     CurlRuntime() {
@@ -29,6 +93,10 @@ struct CurlRuntime {
     }
     ~CurlRuntime() { curl_global_cleanup(); }
 };
+
+void initialize_network() {
+    static const CurlRuntime runtime;
+}
 
 struct Response {
     std::string body;
@@ -145,7 +213,7 @@ struct Asset {
     std::string extension;
 };
 
-std::optional<Asset> read_asset(JsonNode* node, std::string_view kind) {
+std::optional<Asset> read_asset(JsonNode* node, std::string_view kind, bool animated_hero = false) {
     if (!node || !JSON_NODE_HOLDS_OBJECT(node)) return std::nullopt;
     auto* object = json_node_get_object(node);
     const auto id = integer(object, "id");
@@ -154,10 +222,15 @@ std::optional<Asset> read_asset(JsonNode* node, std::string_view kind) {
     const auto* url = text(object, "url");
     const auto* mime = text(object, "mime");
     if (id <= 0 || width <= 0 || height <= 0 || !url || !mime || !allowed_url(url, false)) return std::nullopt;
-    for (const char* flag : {"nsfw", "humor", "animated"}) {
+    for (const char* flag : {"nsfw", "humor"}) {
         auto* value = member(object, flag);
         if (value && (!value_type(value, G_TYPE_BOOLEAN) || json_node_get_boolean(value))) return std::nullopt;
     }
+    auto* animated = member(object, "animated");
+    if (animated && (!value_type(animated, G_TYPE_BOOLEAN) || json_node_get_boolean(animated) != animated_hero)) {
+        return std::nullopt;
+    }
+    if (animated_hero && (kind != "hero" || std::string_view(mime) != "image/webp")) return std::nullopt;
     if (kind == "cover" && (width != 600 || height != 900)) return std::nullopt;
     if (kind == "landscape" && !((width == 460 && height == 215) || (width == 920 && height == 430))) {
         return std::nullopt;
@@ -170,27 +243,43 @@ std::optional<Asset> read_asset(JsonNode* node, std::string_view kind) {
     return Asset{id, url, std::move(extension)};
 }
 
-Asset choose_asset(const Parser& parser, std::string_view kind, std::int64_t preferred) {
+std::optional<Asset> choose_asset(const Parser& parser, std::string_view kind, std::int64_t preferred,
+    bool animated_hero = false) {
     auto* data = response_data(parser);
     if (!data || !JSON_NODE_HOLDS_ARRAY(data)) throw std::runtime_error("SteamGridDB returned an invalid artwork list");
     auto* array = json_node_get_array(data);
     std::optional<Asset> first;
     for (guint index = 0; index < json_array_get_length(array); ++index) {
-        auto asset = read_asset(json_array_get_element(array, index), kind);
+        auto asset = read_asset(json_array_get_element(array, index), kind, animated_hero);
         if (!asset) continue;
         if (asset->id == preferred) return *asset;
         if (!first) first = std::move(asset);
     }
-    if (!first) throw std::runtime_error("SteamGridDB has no supported static " + std::string(kind) + " artwork");
-    return *first;
+    return first;
+}
+
+bool image_data(std::string_view data) {
+    return data.starts_with(std::string_view("\x89PNG\r\n\x1a\n", 8)) ||
+        data.starts_with(std::string_view("\xff\xd8\xff", 3)) ||
+        (data.size() >= 12 && data.substr(0, 4) == "RIFF" && data.substr(8, 4) == "WEBP");
+}
+
+bool cached_artwork(const std::string& filename) {
+    std::error_code error;
+    if (filename.empty() || !std::filesystem::is_regular_file(filename, error)) return false;
+    const auto size = std::filesystem::file_size(filename, error);
+    if (error || size < 12 || size > maximum_body) return false;
+    std::ifstream input(filename, std::ios::binary);
+    std::array<char, 12> header{};
+    input.read(header.data(), header.size());
+    return input && image_data(std::string_view(header.data(), header.size()));
 }
 
 std::string download_asset(const Asset& asset, const std::filesystem::path& directory, std::string_view kind) {
     const auto destination = directory / (std::string(kind) + "-" + std::to_string(asset.id) + asset.extension);
-    if (std::filesystem::is_regular_file(destination) && std::filesystem::file_size(destination) > 0) {
-        return destination.string();
-    }
+    if (cached_artwork(destination.string())) return destination.string();
     const auto body = request(asset.url);
+    if (!image_data(body)) throw std::runtime_error("SteamGridDB returned invalid artwork data");
     const auto filename = destination.string();
     // GLib writes a temporary file and renames it atomically into the cache.
     if (!g_file_set_contents_full(filename.c_str(), body.data(), static_cast<gssize>(body.size()),
@@ -198,6 +287,115 @@ std::string download_asset(const Asset& asset, const std::filesystem::path& dire
         throw std::runtime_error("Could not save SteamGridDB artwork in the cache");
     }
     return destination.string();
+}
+
+std::string normalized_title(const std::string& title) {
+    if (!g_utf8_validate(title.c_str(), -1, nullptr)) return {};
+    std::string cleaned;
+    for (const auto* cursor = title.c_str(); *cursor; cursor = g_utf8_next_char(cursor)) {
+        const auto character = g_utf8_get_char(cursor);
+        if (character == 0x2122 || character == 0x00ae || character == 0x00a9) continue;
+        cleaned.append(cursor, g_utf8_next_char(cursor) - cursor);
+    }
+    const std::unique_ptr<gchar, decltype(&g_free)> normalized(
+        g_utf8_normalize(cleaned.c_str(), -1, G_NORMALIZE_ALL_COMPOSE), g_free);
+    const std::unique_ptr<gchar, decltype(&g_free)> folded(
+        normalized ? g_utf8_casefold(normalized.get(), -1) : nullptr, g_free);
+    if (!folded) return {};
+    std::string result;
+    for (const auto* cursor = folded.get(); *cursor; cursor = g_utf8_next_char(cursor)) {
+        const auto character = g_utf8_get_char(cursor);
+        if (g_unichar_isalnum(character)) {
+            if (!result.empty() && result.back() == ' ') {
+                const auto* previous = g_utf8_find_prev_char(result.data(), result.data() + result.size() - 1);
+                const auto before_space = previous ? g_utf8_get_char(previous) : 0;
+                if ((g_unichar_isalpha(before_space) && g_unichar_isdigit(character)) ||
+                    (g_unichar_isdigit(before_space) && g_unichar_isalpha(character))) result.pop_back();
+            }
+            result.append(cursor, g_utf8_next_char(cursor) - cursor);
+        } else if (character != '\'' && character != 0x2019 && !result.empty() && result.back() != ' ') {
+            result.push_back(' ');
+        }
+    }
+    if (!result.empty() && result.back() == ' ') result.pop_back();
+    return result;
+}
+
+std::int64_t matching_game(const Parser& parser, const std::string& title) {
+    auto* data = response_data(parser);
+    if (!data || !JSON_NODE_HOLDS_ARRAY(data)) throw std::runtime_error("SteamGridDB returned an invalid game list");
+    const auto expected = normalized_title(title);
+    auto* array = json_node_get_array(data);
+    std::int64_t matched = 0;
+    for (guint index = 0; index < json_array_get_length(array); ++index) {
+        auto* node = json_array_get_element(array, index);
+        if (!node || !JSON_NODE_HOLDS_OBJECT(node)) continue;
+        auto* object = json_node_get_object(node);
+        const auto id = integer(object, "id");
+        const auto* name = text(object, "name");
+        if (id <= 0 || !name || expected.empty() || normalized_title(name) != expected) continue;
+        if (matched && matched != id) throw std::runtime_error("SteamGridDB has several games with the same title");
+        matched = id;
+    }
+    return matched;
+}
+
+std::int64_t search_game(const std::string& title, const std::string& key) {
+    const auto cleaned = normalized_title(title);
+    if (cleaned.empty()) throw std::runtime_error("The game title cannot be searched");
+    for (const auto& query : {cleaned, title}) {
+        const std::unique_ptr<gchar, decltype(&g_free)> escaped(
+            g_uri_escape_string(query.c_str(), nullptr, false), g_free);
+        if (!escaped) throw std::runtime_error("Could not prepare the game search");
+        const auto response = api_response("/search/autocomplete/" + std::string(escaped.get()), key);
+        if (const auto id = matching_game(response, title)) return id;
+        if (title == cleaned) break;
+    }
+    throw std::runtime_error("SteamGridDB has no exact title match");
+}
+
+struct ArtworkKind {
+    const char* name;
+    const char* endpoint;
+    const char* filters;
+    std::string Game::* path;
+};
+
+constexpr std::array artwork_kinds{
+    ArtworkKind{"cover", "grids", "dimensions=600x900&", &Game::cover_path},
+    ArtworkKind{"landscape", "grids", "dimensions=460x215,920x430&", &Game::landscape_path},
+    ArtworkKind{"hero", "heroes", "", &Game::hero_path},
+    ArtworkKind{"logo", "logos", "", &Game::logo_path},
+};
+
+void load_artwork(Game& game, const std::string& key, const std::filesystem::path& directory,
+    const std::array<std::int64_t, 4>& preferred, std::vector<std::string>* warnings,
+    bool refresh_heroes = false) {
+    const auto id = std::to_string(game.steamgriddb_id);
+    game.source_url = "https://www.steamgriddb.com/game/" + id;
+    for (std::size_t index = 0; index < artwork_kinds.size(); ++index) {
+        const auto& kind = artwork_kinds[index];
+        auto& path = game.*kind.path;
+        const bool hero = kind.path == &Game::hero_path;
+        const bool cached = cached_artwork(path);
+        if (cached && !(hero && refresh_heroes)) continue;
+        if (!cached) path.clear();
+        try {
+            const auto response = api_response("/" + std::string(kind.endpoint) + "/game/" + id + "?" +
+                kind.filters + "types=" + (hero ? "animated" : "static") + "&nsfw=false&humor=false", key);
+            auto asset = choose_asset(response, kind.name, preferred[index], hero);
+            if (!asset && hero) {
+                if (cached) continue;
+                const auto fallback = api_response("/heroes/game/" + id + "?types=static&nsfw=false&humor=false", key);
+                asset = choose_asset(fallback, kind.name, preferred[index]);
+            }
+            if (!asset) throw std::runtime_error("SteamGridDB has no supported static " + std::string(kind.name) + " artwork");
+            path = download_asset(*asset, directory, kind.name);
+        } catch (const std::runtime_error& error) {
+            if (warnings) warnings->push_back(game.title + " (" + kind.name + "): " + error.what());
+            else if (index != 3) throw;
+        }
+    }
 }
 
 struct DemoGame {
@@ -216,11 +414,24 @@ constexpr std::array demo_games{
 
 } // namespace
 
+std::string read_steamgrid_api_key() {
+    if (const auto* key = g_getenv("STEAMGRIDDB_API_KEY"); key && *key) {
+        return valid_api_key(key) ? key : std::string{};
+    }
+    auto key = access_keyring(nullptr);
+    return valid_api_key(key) ? key : std::string{};
+}
+
+void save_steamgrid_api_key(const std::string& api_key) {
+    if (!valid_api_key(api_key)) throw std::runtime_error("Enter a valid SteamGridDB API key");
+    access_keyring(&api_key);
+}
+
 std::vector<Game> download_demo_games(const std::string& api_key, const std::filesystem::path& artwork_directory) {
-    if (api_key.empty() || api_key.find_first_of("\r\n") != std::string::npos) {
+    if (!valid_api_key(api_key)) {
         throw std::runtime_error("A valid SteamGridDB API key is required");
     }
-    static const CurlRuntime runtime;
+    initialize_network();
     const auto directory = std::filesystem::absolute(artwork_directory).lexically_normal();
     std::filesystem::create_directories(directory);
     const auto now = std::chrono::duration_cast<std::chrono::seconds>(
@@ -243,22 +454,49 @@ std::vector<Game> download_demo_games(const std::string& api_key, const std::fil
         game.steamgriddb_id = demo.id;
         game.title = name;
         game.subtitle = "SteamGridDB · Demo entry";
-        game.source_url = "https://www.steamgriddb.com/game/" + id;
         game.is_demo = true;
         game.last_played = index < 5 ? now - static_cast<std::int64_t>(index + 1) * 7200 : 0;
-        const auto portrait = api_response("/grids/game/" + id + "?dimensions=600x900&types=static&nsfw=false&humor=false", api_key);
-        game.cover_path = download_asset(choose_asset(portrait, "cover", demo.preferred[0]), directory, "cover");
-        const auto landscape = api_response("/grids/game/" + id + "?dimensions=460x215,920x430&types=static&nsfw=false&humor=false", api_key);
-        game.landscape_path = download_asset(choose_asset(landscape, "landscape", demo.preferred[1]), directory, "landscape");
-        const auto hero = api_response("/heroes/game/" + id + "?types=static&nsfw=false&humor=false", api_key);
-        game.hero_path = download_asset(choose_asset(hero, "hero", demo.preferred[2]), directory, "hero");
-        try {
-            const auto logos = api_response("/logos/game/" + id + "?types=static&nsfw=false&humor=false", api_key);
-            game.logo_path = download_asset(choose_asset(logos, "logo", demo.preferred[3]), directory, "logo");
-        } catch (const std::runtime_error&) {
-            // The UI can render the actual title when no usable logo is available.
-        }
+        load_artwork(game, api_key, directory, demo.preferred, nullptr);
         result.push_back(std::move(game));
+    }
+    return result;
+}
+
+std::vector<Game> download_game_artwork(const std::vector<Game>& games, const std::string& api_key,
+    const std::filesystem::path& artwork_directory, std::vector<std::string>& warnings, bool refresh_heroes) {
+    auto result = games;
+    bool needs_download = refresh_heroes && !result.empty();
+    for (auto& game : result) {
+        for (const auto& kind : artwork_kinds) {
+            auto& path = game.*kind.path;
+            if (cached_artwork(path)) continue;
+            path.clear();
+            needs_download = true;
+        }
+    }
+    if (!needs_download) return result;
+    if (!valid_api_key(api_key)) {
+        warnings.push_back("A valid SteamGridDB API key is required to load or refresh artwork");
+        return result;
+    }
+    initialize_network();
+    const auto directory = std::filesystem::absolute(artwork_directory).lexically_normal();
+    for (auto& game : result) {
+        bool complete = true;
+        for (const auto& kind : artwork_kinds) complete = complete && cached_artwork(game.*kind.path);
+        if (complete && !refresh_heroes) continue;
+        try {
+            if (game.id.empty() || game.id.find_first_not_of(
+                    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_") != std::string::npos) {
+                throw std::runtime_error("The game ID is not suitable for an artwork cache directory");
+            }
+            if (game.steamgriddb_id <= 0) game.steamgriddb_id = search_game(game.title, api_key);
+            const auto game_directory = directory / game.id;
+            std::filesystem::create_directories(game_directory);
+            load_artwork(game, api_key, game_directory, {}, &warnings, refresh_heroes);
+        } catch (const std::runtime_error& error) {
+            warnings.push_back(game.title + ": " + error.what());
+        }
     }
     return result;
 }

@@ -7,9 +7,9 @@ Additional attribution terms: see NOTICE in the repository root.
 
 # AnyPS5 integration
 
-FrameRift is planned as a separate native application for Windows and Linux, combining a game library, prepared-game launch and a Profiler view. Game execution stays in the native program converted by AnyPS5.
+FrameRift is a separate native application with a game library, Linux conversion/launch and a Profiler console. Windows launch remains unverified. Game execution stays in the native program converted by AnyPS5.
 
-Committed `main` contains the library and cache. Current development work adds Linux conversion and launch through the [modified AnyPS5 fork](https://github.com/MichalSy/AnyPS5), with a separate game window and Profiler console. Window embedding and structured measurements remain planned. Confirmed upstream details below refer to the pinned [snapshot `197ffac97203d715a258a28b432fa2eedbf8be6f`](https://github.com/boykopovar/AnyPS5/tree/197ffac97203d715a258a28b432fa2eedbf8be6f). Later upstream changes require separate review. Stock upstream AnyPS5 is not a supported substitute for the modified fork.
+Linux conversion and launch use the [modified AnyPS5 fork](https://github.com/MichalSy/AnyPS5), with a separate game window and Profiler console. Window embedding and structured measurements remain planned. Confirmed upstream details below refer to the pinned [snapshot `197ffac97203d715a258a28b432fa2eedbf8be6f`](https://github.com/boykopovar/AnyPS5/tree/197ffac97203d715a258a28b432fa2eedbf8be6f). Later upstream changes require separate review. Stock upstream AnyPS5 is not a supported substitute for the modified fork.
 
 See also [Profiling](profiling.md), [Controller and input](controller-input.md) and the [project overview](../README.md).
 
@@ -21,11 +21,11 @@ The integration involves three components:
 
 | Component | Confirmed responsibility | FrameRift responsibility |
 | --- | --- | --- |
-| Relinker | Converts a clean ELF and bundled game modules | Development: convert missing generated code and support explicit rebuilds. Broader input/option management remains planned. |
-| Converted game | Runs as a Linux ELF or Windows EXE | Development: start it as a separate Linux process and observe its state. Windows launch remains unverified. |
-| AnyPS5 system libraries | Loaded by the operating system into the game process | Development: use an explicitly configured compatible library set. Richer provenance/version tracking remains planned. |
+| Relinker | Converts a clean ELF and bundled game modules | Convert missing generated code and support explicit rebuilds. Broader input/option management remains planned. |
+| Converted game | Runs as a Linux ELF or Windows EXE | Start it as a separate Linux process and observe its state. Windows launch remains unverified. |
+| AnyPS5 system libraries | Loaded by the operating system into the game process | Use an explicitly configured compatible library set. Richer provenance/version tracking remains planned. |
 
-The pinned AnyPS5 documentation requires a clean ELF input. This must not be interpreted as support for arbitrary PS5 packages, SELF containers or their extraction. The relinker converts the inputs it supports; a broader import pipeline would be a separate effort. The development launcher passes the original `eboot.bin` to the configured modified relinker, without establishing general package or extraction support. Source: [Relinker usage](https://github.com/boykopovar/AnyPS5/blob/197ffac97203d715a258a28b432fa2eedbf8be6f/docs/user/USAGE.md#input-and-conversion).
+The pinned AnyPS5 documentation requires a clean ELF input. This must not be interpreted as support for arbitrary PS5 packages, SELF containers or their extraction. The relinker converts the inputs it supports; a broader import pipeline would be a separate effort. The launcher passes the original `eboot.bin` to the configured modified relinker, without establishing general package or extraction support. Source: [Relinker usage](https://github.com/boykopovar/AnyPS5/blob/197ffac97203d715a258a28b432fa2eedbf8be6f/docs/user/USAGE.md#input-and-conversion).
 
 ## Process separation
 
@@ -47,7 +47,7 @@ flowchart LR
 
 FrameRift does not load the game into its GUI process or render the game's Vulkan output through the library view. Native window embedding could change the visible arrangement while preserving the process boundary. Internal communication and window integration are separate interfaces. Timing-file ingestion in the diagram remains planned.
 
-The development launch path uses a separate game window. This allows launch work to proceed while embedding is investigated for Windows and Linux. Reliable embedded mode remains an open technical question, not a demonstrated product feature.
+The launch path uses a separate game window. This allows launch work to proceed while embedding is investigated for Windows and Linux. Reliable embedded mode remains an open technical question, not a demonstrated product feature.
 
 ## Existing upstream runtime layout
 
@@ -69,9 +69,9 @@ Game/
 
 `sce_sys/param.json` and `icon0.png` are resources read by the code; import must check whether they exist. AnyPS5 also permits bundled-module directories named `sce_modules/` or `prx/`. `libs/` contains AnyPS5 system libraries rather than unchanged PS5 modules. A different library search path can be selected during conversion with `--rpath`. AnyPS5 describes game resources as copied separately into `app0/`. Sources: [Runtime layout](https://github.com/boykopovar/AnyPS5/blob/197ffac97203d715a258a28b432fa2eedbf8be6f/docs/user/USAGE.md#runtime-layout), [Metadata paths in code](https://github.com/boykopovar/AnyPS5/blob/197ffac97203d715a258a28b432fa2eedbf8be6f/core/libs/prx/libkernel/AppMetadata/src/AppMetadata.cpp#L24).
 
-The development integration uses the fork's `tools/run_game.py` with explicit original-game, generated-executable, working-directory and shared-runtime paths. It preserves original resources at their installation path and caches generated code under `framerift/games/<game-id>/`.
+The integration uses the fork's [`tools/run_game.py`](https://github.com/MichalSy/AnyPS5/blob/f36da63a8cac9ac8b3bdcad1dd27756850df90cc/tools/run_game.py) with explicit original-game, generated-executable, persistent working-directory and shared-runtime paths. It preserves original resources at their installation path and caches generated code under `framerift/games/<game-id>/`.
 
-Each game needs a distinct working directory, including for relative resource paths, input configuration and `frame-timing.log`. Concurrent games must not overwrite one another's logs or configuration.
+Each game has a distinct persistent working directory under the shared data root, separate from the code cache. AnyPS5 resolves its relative save/runtime paths there. Its optional `frame-timing.log` is also relative to that directory; timing import remains planned. FrameRift captures stdout/stderr in a separate session log.
 
 On Windows, AnyPS5 says a locally built library set also needs matching toolchain DLLs in the library directory; release archives include these. A future Windows launcher should diagnose missing files explicitly rather than assume a same-named DLL on the global search path is sufficient. Source: [Windows runtime dependencies](https://github.com/boykopovar/AnyPS5/blob/197ffac97203d715a258a28b432fa2eedbf8be6f/docs/user/USAGE.md#runtime-layout).
 
@@ -80,22 +80,22 @@ On Windows, AnyPS5 says a locally built library set also needs matching toolchai
 - Managed directories use a stable library game ID; display names and original installation-folder names are not path keys.
 - The UI displays game titles from metadata, never installation-folder names.
 - The game ID remains stable when an installation is renamed or moved.
-- Development generated code lives under `framerift/games/<game-id>/` in the cache. A versioned layout such as `<cache-root>/<game-id>/<runtime-id>/` is a future proposal, not the current path.
-- Persistent saves should live under `<framerift-data-root>/saves/<game-id>/`, independent of runtime version and conversion cache.
-- Logs live under `<framerift-data-root>/logs/<game-id>/<session-id>/`; every launch gets its own session directory.
-- Saves and logs should share one FrameRift data root, with subdirectories created automatically. A configurable data root remains a proposal. Original games and the shared runtime stay at their selected paths.
+- Generated code lives under `framerift/games/<game-id>/` in the cache. A versioned layout such as `<cache-root>/<game-id>/<runtime-id>/` is a future proposal, not the current path.
+- The persistent game working directory is `<framerift-data-root>/saves/<game-id>/`, independent of runtime version and conversion cache. AnyPS5 creates relative save trees such as `_sd/` and `_sd_mem/` there.
+- Captured session logs live under `<framerift-data-root>/logs/<game-id>/<session-id>/`; every launch or rebuild gets its own session directory.
+- Saves and captured session logs share one FrameRift data root, with subdirectories created automatically. A configurable data root remains a proposal. Original games and the shared runtime stay at their selected paths.
 
 ## Titles, identity and local artwork
 
 AnyPS5 reads `titleId` from `param.json` and a localized `titleName` under `localizedParameters`. Its existing parser prefers the declared default language, then `en-US`, then an available language entry. FrameRift can read the same document but must define its own language selection explicitly. Source: [ParamJsonParser](https://github.com/boykopovar/AnyPS5/blob/197ffac97203d715a258a28b432fa2eedbf8be6f/core/libs/prx/libkernel/AppMetadata/src/ParamJsonParser.cpp#L244).
 
-The development scanner uses the metadata title ID as its stable library ID. Supporting multiple versions, conversions or installations of one title may require a separate entry ID, with fields for title ID, installation path, available game version and the selected AnyPS5 library set. That richer identity model remains a proposal.
+The scanner uses the metadata title ID as its stable library ID. Supporting multiple versions, conversions or installations of one title may require a separate entry ID, with fields for title ID, installation path, available game version and the selected AnyPS5 library set. That richer identity model remains a proposal.
 
 `icon0.png` is already part of AnyPS5 integration: the runtime uses it as the SDL window icon, and Windows conversion also uses it for EXE resources. Sources: [SDL window icon](https://github.com/boykopovar/AnyPS5/blob/197ffac97203d715a258a28b432fa2eedbf8be6f/core/libs/prx/libSceVideoOut/src/DisplayWindow.cpp#L25), [Windows relinker](https://github.com/boykopovar/AnyPS5/blob/197ffac97203d715a258a28b432fa2eedbf8be6f/core/relinker/main.cpp#L122).
 
 The proposed artwork flow is:
 
-1. Read the local game title and title ID; implemented in the development scanner.
+1. Read the local game title and title ID; implemented in the scanner.
 2. Record any `icon0.png` as a small status image and local fallback; planned.
 3. Match SteamGridDB as the primary source for covers, wide backgrounds and transparent logos. Manual selection taking precedence remains planned.
 4. Reuse cached resources offline and fall back to available local images or placeholders when matching fails. Local-icon fallback remains planned; details are in [Artwork](artwork.md).
@@ -122,7 +122,7 @@ AnyPS5 already has an import audit. Registry files generated with `--registry` a
 
 FrameRift could present this report clearly. A successful import audit confirms only the checked import resolution; it does not promise correct launch, playability or error-free graphics. Design images featuring a particular title are not compatibility evidence either.
 
-The development session manager captures process start, stdout, stderr and exit status asynchronously. The UI thread must not wait for a whole game session or a large log file. Future diagnostics should preserve the last known phase on failure: preparation, loader/dependencies, launch or running session. AnyPS5's README documents that unsupported or unexpected states can cause errors and terminate the program. Source: [Error behavior](https://github.com/boykopovar/AnyPS5/blob/197ffac97203d715a258a28b432fa2eedbf8be6f/README.md).
+The session manager captures process start, stdout, stderr and exit status asynchronously. The UI thread must not wait for a whole game session or a large log file. Future diagnostics should preserve the last known phase on failure: preparation, loader/dependencies, launch or running session. AnyPS5's README documents that unsupported or unexpected states can cause errors and terminate the program. Source: [Error behavior](https://github.com/boykopovar/AnyPS5/blob/197ffac97203d715a258a28b432fa2eedbf8be6f/README.md).
 
 ## Game windows and open integration work
 
@@ -136,11 +136,11 @@ The examined AnyPS5 build enables X11 and disables Wayland. This is the concrete
 
 | Experiment | Required result before an implementation decision |
 | --- | --- |
-| Native launch on both target systems | Launch a prepared game with a defined working directory, logs and exit status. Linux development work exists; Windows remains unverified. |
+| Native launch on both target systems | Launch a prepared game with a defined working directory, logs and exit status. Linux launch is implemented; Windows remains unverified. |
 | Library sets | Track versions, dependencies and artifact provenance without modifying original files. |
 | Local metadata | Missing or damaged JSON/images produce an understandable library fallback. |
 | Windows window integration | Input, resize, DPI, fullscreen and process exit work with the actual SDL/Vulkan window. |
 | Linux window integration | Document X11/XWayland behavior separately from any later native Wayland solution. |
 | Telemetry | Keep the connection optional; losing it must not block the game. See [Profiling](profiling.md). |
 
-External Linux launch has been checked through opening a game window in development. This does not confirm playability or the planned embedding and measurement features; the remaining experiments still need validation.
+External Linux launch has been checked through opening a game window. This does not confirm playability or the planned embedding and measurement features; the remaining experiments still need validation.

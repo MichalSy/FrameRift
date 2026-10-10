@@ -26,7 +26,21 @@ struct Game {
     std::int64_t steamgriddb_id = 0;
     std::string logo_path;
     std::string source_url;
+    std::string installation_path;
 };
+
+struct ScanResult {
+    std::vector<Game> games;
+    std::vector<std::string> warnings;
+};
+
+struct LaunchSettings {
+    std::string anyps5_directory;
+    std::string runtime_directory;
+    std::string relinker_path;
+};
+
+ScanResult scan_game_folders(const std::vector<std::string>& folders);
 
 class Library {
 public:
@@ -38,6 +52,13 @@ public:
 
     std::vector<Game> games() const;
     void cache_demo(const std::vector<Game>& games);
+    std::vector<std::string> game_folders() const;
+    void set_game_folders(const std::vector<std::string>& folders);
+    void cache_scanned(const std::vector<Game>& games);
+    void cache_artwork(const std::vector<Game>& games);
+    LaunchSettings launch_settings() const;
+    void set_launch_settings(const LaunchSettings& settings);
+    void mark_played(const std::string& game_id);
 
 private:
     sqlite3* database_ = nullptr;

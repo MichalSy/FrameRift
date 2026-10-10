@@ -13,6 +13,13 @@ Additional attribution terms: see NOTICE in the repository root.
 - Write code, identifiers, comments and UI text in English.
 - Keep data and behavior in their domain; reuse existing code before adding a file or abstraction.
 - Keep SQLite game/cache queries in `src/library`; keep GTK presentation in `src/ui`.
+- Keep conversion and process launching in `src/runtime`; reuse the AnyPS5 launcher with explicit original-game, generated-code and shared-runtime paths.
+- Rebuild only generated game code; preserve original files, runtime data, saves, shader caches and shared runtime libraries.
+- Use VTE only for profiler output; keep direct process capture and full session logs in `src/runtime`, bound scrollback and keep the game independent of tab navigation.
+- Let the app scan configured game folders and import metadata; never seed actual installations manually.
+- Use stable game IDs for managed cache, save and log directories; never derive paths from game titles or installation folder names.
+- Keep saves and logs in `saves/` and `logs/` beneath the shared FrameRift data directory.
+- Display game titles from metadata in the UI; never use installation folder names as display titles.
 - Focus the current slice on the game library; add other screens only when requested.
 - Keep cover sizes stable; use wider windows for additional grid columns.
 - Prefer the standard library and dependencies already in the native GTK stack.
@@ -21,6 +28,7 @@ Additional attribution terms: see NOTICE in the repository root.
 - Use real game artwork from the API; never create or generate game illustrations.
 - Preserve user cache records; replace demo records transactionally after successful API loading.
 - Keep API keys outside the repository, database, logs and command arguments.
+- Configure artwork credentials in Settings and store them in the desktop keyring; read secrets outside the UI thread.
 - Keep callbacks and resource ownership explicit; never let exceptions cross C callbacks.
 - Use a few meaningful checks for data behavior and a native UI smoke check, without a test framework.
 - Build and verify the changed behavior; keep documentation about the current state concise.

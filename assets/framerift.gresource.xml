@@ -11,4 +11,7 @@ Additional attribution terms: see NOTICE in the repository root.
     <file>ui/style.css</file>
     <file>ui/mark.svg</file>
   </gresource>
+  <gresource prefix="/io/github/framerift/FrameRift">
+    <file alias="icons/scalable/apps/io.github.framerift.FrameRift.svg">ui/mark.svg</file>
+  </gresource>
 </gresources>

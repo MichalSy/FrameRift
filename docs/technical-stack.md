@@ -9,26 +9,26 @@ Additional attribution terms: see NOTICE in the repository root.
 
 ## Status
 
-Committed `main` implements the game library with C++20, CMake, GTK4, SQLite, libcurl and JSON-GLib. Development work adds GTK4 VTE for the Profiler console, libsecret for artwork credentials, libwebp for animated heroes and GIO subprocesses for Linux launch. Build and run commands are in the [README](../README.md). Linux is the development platform; Windows builds and distribution remain unverified.
+FrameRift implements the game library with C++20, CMake, GTK4, SQLite, libcurl and JSON-GLib. GTK4 VTE provides the Profiler console, libsecret stores artwork credentials, libwebp plays animated heroes and GIO subprocesses handle Linux launch. Build and run commands are in the [README](../README.md). Linux is the development platform; Windows builds and distribution remain unverified.
 
 ## Implemented components
 
-The table covers both committed `main` and the development additions identified above.
+The table lists the implemented stack.
 
 | Area | Component | Purpose |
 | --- | --- | --- |
 | Language | C++20 | Library domain and native UI |
 | Build | CMake 3.20+, Ninja, pkg-config | Build the program, cache check and resources |
 | UI | GTK4 4.12+ | Native widgets, rendering and input through the C API |
-| Console | GTK4 VTE 0.70+ | Output-only terminal display, ANSI handling and bounded scrollback; development work |
+| Console | GTK4 VTE 0.70+ | Output-only terminal display, ANSI handling and bounded scrollback |
 | GTK stack | GLib/GObject/GIO | Application, signals, resources, cache locations and subprocesses |
 | Local cache | SQLite3 | Game metadata, SteamGridDB mappings and local artwork paths |
 | HTTP | libcurl 7.85+ | SteamGridDB API and image downloads outside UI callbacks |
 | JSON | JSON-GLib | Read SteamGridDB responses using the existing GLib stack |
-| Credentials | libsecret | Store the artwork API key in the desktop keyring; development work |
-| Hero animation | libwebp and libwebpdemux | Decode and composite timed WebP frames for the selected GTK hero; development work |
+| Credentials | libsecret | Store the artwork API key in the desktop keyring |
+| Hero animation | libwebp and libwebpdemux | Decode and composite timed WebP frames for the selected GTK hero |
 | Resources | `glib-compile-resources` | Embed CSS and app marks as GResources |
-| Checks | CTest and small C++ programs | Check cache behavior and the development launch flow without a test framework |
+| Checks | CTest and small C++ programs | Check cache behavior and the launch flow without a test framework |
 
 FrameRift has a native UI process and no browser runtime. Dependencies are added only for a concrete need. [Toolkit and platforms](toolkit-and-platforms.md) covers the toolkit decision for later platform integration.
 
@@ -46,7 +46,7 @@ GTK4/libadwaita and Qt are alternative frontend paths. Including both in the fir
 
 ## GTK4 and libadwaita in C++
 
-GTK4 and libadwaita provide C APIs. The preview uses GTK4 directly from C++. GObject reference ownership and callback lifetimes stay explicit; C++ exceptions must not escape C callbacks. gtkmm and libadwaita are not included and will be considered only when they offer a concrete benefit.
+GTK4 and libadwaita provide C APIs. The application uses GTK4 directly from C++. GObject reference ownership and callback lifetimes stay explicit; C++ exceptions must not escape C callbacks. gtkmm and libadwaita are not included and will be considered only when they offer a concrete benefit.
 
 The custom design should not depend on a large set of undocumented theme overrides. Reusable cards, hero content, toolbars, timelines and frame details need a deliberately designed component base. libadwaita should be selected for specific benefits rather than defining every UI detail automatically.
 
@@ -58,13 +58,13 @@ JSON-GLib currently reads SteamGridDB responses. This reuses the existing GLib s
 
 SQLite stores the catalog and indexes. The primary measurement store will be designed separately. zstd is a possible capture-compression component; compression and file writes must stay outside the game thread and UI drawing routine.
 
-libcurl handles HTTPS requests and image downloads. Metadata and images are then stored in the local cache. In the development build, Settings saves the API key through libsecret in the desktop keyring; `STEAMGRIDDB_API_KEY` takes precedence. Caches and diagnostics exclude the key. Keyring access has a timeout and runs outside the GTK thread, as do network requests. Manual matching, refresh behavior and rate limits belong in small, focused extensions.
+libcurl handles HTTPS requests and image downloads. Metadata and images are then stored in the local cache. Settings saves the API key through libsecret in the desktop keyring; `STEAMGRIDDB_API_KEY` takes precedence. Caches and diagnostics exclude the key. Keyring access has a timeout and runs outside the GTK thread, as do network requests. Manual matching, refresh behavior and rate limits belong in small, focused extensions.
 
 ## SDL2, Vulkan and image formats
 
 The examined AnyPS5 runtime uses SDL2 and Vulkan. These primarily belong to the game process. FrameRift needs SDL2 itself only if a concrete adapter or controller-navigation feature depends on it. A profiler chart does not need to use the game's graphics API.
 
-GTK loads static PNG and JPEG images. The development hero module in `src/ui` uses libwebpdemux for animated WebP: the decoder composites frames with transparency and disposal rules, while a GTK tick controls frame durations and loops. Compressed files are limited to 64 MiB, and WebP canvases to 16 million pixels before decoder allocation. Hidden heroes and disabled GTK animations pause playback. Windows playback remains unverified.
+GTK loads static PNG and JPEG images. The hero module in `src/ui` uses libwebpdemux for animated WebP: the decoder composites frames with transparency and disposal rules, while a GTK tick controls frame durations and loops. Compressed files are limited to 64 MiB, and WebP canvases to 16 million pixels before decoder allocation. Hidden heroes and disabled GTK animations pause playback. Windows playback remains unverified.
 
 An integrated game view is a separate platform concern. A Vulkan header or SDL link target does not automatically allow two processes to share a game surface. [Game-window integration](game-window-integration.md) describes the requirements.
 
@@ -76,7 +76,7 @@ The FrameRift UI needs understandable, correctly correlated data even without a 
 
 ## Versions and distribution
 
-CMake checks the minimum versions listed above. CI and end-user packages for Windows and Linux remain planned. Linux/X11 and Linux/Wayland need separate integration checks: successful package installation does not imply identical game-window integration capabilities.
+CMake checks the minimum versions listed above. CMake installs the executable and, on Linux, a desktop menu entry and icon under the configured prefix. Configure `CMAKE_INSTALL_PREFIX` before building so the desktop entry points to the installed binary. CI and clean end-user packages for Windows and Linux remain planned. Linux/X11 and Linux/Wayland need separate integration checks: successful package installation does not imply identical game-window integration capabilities.
 
 A packaging experiment should select tools for the GTK or Qt path. MSYS2, gvsbuild, package managers and other dependency strategies need evaluation; no combination with a particular Windows compiler has been chosen. An end-user package should include its required runtime libraries with clear provenance.
 

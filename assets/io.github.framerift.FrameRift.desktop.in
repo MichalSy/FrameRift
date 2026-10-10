@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Michal Sytko and FrameRift contributors
+# Original project: https://github.com/MichalSy/FrameRift
+# Additional attribution terms: see NOTICE in the repository root.
+
+[Desktop Entry]
+Type=Application
+Name=FrameRift
+GenericName=Game Library
+Comment=Game library and runtime console
+Exec="@CMAKE_INSTALL_FULL_BINDIR@/framerift"
+TryExec=@CMAKE_INSTALL_FULL_BINDIR@/framerift
+Icon=io.github.framerift.FrameRift
+Terminal=false
+StartupNotify=true
+Categories=Game;
+Keywords=game;library;AnyPS5;PS5;

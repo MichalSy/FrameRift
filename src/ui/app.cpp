@@ -5,6 +5,9 @@
 
 #include "library/library.hpp"
 #include "library/steamgriddb.hpp"
+#include "runtime/launch.hpp"
+#include "ui/profiler.hpp"
+#include "ui/hero.hpp"
 
 #include <gtk/gtk.h>
 
@@ -12,6 +15,7 @@
 #include <filesystem>
 #include <iostream>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -57,96 +61,6 @@ GtkWidget* picture(const std::string& path, const std::string& description) {
     return widget;
 }
 
-struct HeroArtwork {
-    cairo_surface_t* image = nullptr;
-    cairo_surface_t* previous = nullptr;
-    std::string path;
-    gint64 started = 0;
-    guint tick = 0;
-
-    ~HeroArtwork() {
-        if (image) cairo_surface_destroy(image);
-        if (previous) cairo_surface_destroy(previous);
-    }
-};
-
-GtkWidget* hero_canvas() {
-    auto* widget = gtk_drawing_area_new();
-    auto* artwork = new HeroArtwork;
-    g_object_set_data(G_OBJECT(widget), "artwork", artwork);
-    gtk_drawing_area_set_draw_func(GTK_DRAWING_AREA(widget), +[](GtkDrawingArea*, cairo_t* context, int width, int height, gpointer data) {
-        const auto& artwork = *static_cast<HeroArtwork*>(data);
-        cairo_rectangle(context, 0, 0, width, height);
-        cairo_clip(context);
-        const auto paint = [&](cairo_surface_t* image, double opacity) {
-            if (!image) return;
-            const int image_width = cairo_image_surface_get_width(image);
-            const int image_height = cairo_image_surface_get_height(image);
-            const double scale = std::max(static_cast<double>(width) / image_width, static_cast<double>(height) / image_height);
-            cairo_save(context);
-            // Keep the upper artwork visible when a wide banner crops the canvas.
-            cairo_translate(context, (width - image_width * scale) / 2, 0);
-            cairo_scale(context, scale, scale);
-            cairo_set_source_surface(context, image, 0, 0);
-            cairo_paint_with_alpha(context, opacity);
-            cairo_restore(context);
-        };
-        const double progress = artwork.previous ? std::clamp((g_get_monotonic_time() - artwork.started) / 180000.0, 0.0, 1.0) : 1.0;
-        paint(artwork.previous, 1);
-        paint(artwork.image, progress * progress * (3 - 2 * progress));
-    }, artwork, +[](gpointer data) { delete static_cast<HeroArtwork*>(data); });
-    return widget;
-}
-
-void set_hero_art(GtkWidget* widget, const Game* game) {
-    auto& artwork = *static_cast<HeroArtwork*>(g_object_get_data(G_OBJECT(widget), "artwork"));
-    auto path = game ? game->hero_path : std::string{};
-    if (artwork.path == path) return;
-    auto* texture = game && !game->hero_path.empty() ? gdk_texture_new_from_filename(game->hero_path.c_str(), nullptr) : nullptr;
-    cairo_surface_t* image = nullptr;
-    if (texture) {
-        image = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, gdk_texture_get_width(texture), gdk_texture_get_height(texture));
-        auto* downloader = gdk_texture_downloader_new(texture);
-        gdk_texture_downloader_set_format(downloader, GDK_MEMORY_DEFAULT);
-        if (cairo_surface_status(image) == CAIRO_STATUS_SUCCESS) {
-            gdk_texture_downloader_download_into(downloader, cairo_image_surface_get_data(image), cairo_image_surface_get_stride(image));
-            cairo_surface_mark_dirty(image);
-        }
-        gdk_texture_downloader_free(downloader);
-        g_object_unref(texture);
-        if (cairo_surface_status(image) != CAIRO_STATUS_SUCCESS) {
-            cairo_surface_destroy(image);
-            throw std::runtime_error("Could not prepare game artwork");
-        }
-    }
-    if (artwork.tick) gtk_widget_remove_tick_callback(widget, artwork.tick);
-    artwork.tick = 0;
-    if (artwork.previous) cairo_surface_destroy(artwork.previous);
-    artwork.previous = artwork.image;
-    artwork.image = image;
-    artwork.path = std::move(path);
-    gboolean animate = false;
-    g_object_get(gtk_widget_get_settings(widget), "gtk-enable-animations", &animate, nullptr);
-    if (artwork.previous && artwork.image && animate) {
-        artwork.started = g_get_monotonic_time();
-        artwork.tick = gtk_widget_add_tick_callback(widget, +[](GtkWidget* widget, GdkFrameClock* clock, gpointer data) -> gboolean {
-            auto& artwork = *static_cast<HeroArtwork*>(data);
-            gtk_widget_queue_draw(widget);
-            if (gdk_frame_clock_get_frame_time(clock) - artwork.started < 180000) return G_SOURCE_CONTINUE;
-            cairo_surface_destroy(artwork.previous);
-            artwork.previous = nullptr;
-            artwork.tick = 0;
-            return G_SOURCE_REMOVE;
-        }, &artwork, nullptr);
-    } else if (artwork.previous) {
-        cairo_surface_destroy(artwork.previous);
-        artwork.previous = nullptr;
-    }
-    gtk_accessible_update_property(GTK_ACCESSIBLE(widget), GTK_ACCESSIBLE_PROPERTY_LABEL,
-        game ? game->title.c_str() : "Selected game artwork", -1);
-    gtk_widget_queue_draw(widget);
-}
-
 std::string folded(const std::string& text) {
     auto* value = g_utf8_casefold(text.c_str(), -1);
     std::string result(value);
@@ -166,8 +80,8 @@ std::vector<std::string> folded_titles(const std::vector<Game>& games) {
 class Application {
 public:
     explicit Application(const std::string& cache_path)
-        : library_(cache_path), artwork_directory_(std::filesystem::path(cache_path).parent_path() / "artwork") {
-        games_ = library_.games();
+        : library_(cache_path), database_path_(cache_path), artwork_directory_(std::filesystem::path(cache_path).parent_path() / "artwork") {
+        games_ = visible_games();
         search_text_ = folded_titles(games_);
         if (!games_.empty()) selected_id_ = games_.front().id;
     }
@@ -184,6 +98,12 @@ public:
     }
 
 private:
+    enum class GameAction { Play, Rebuild };
+    struct PendingAction {
+        std::string game_id;
+        GameAction action;
+    };
+
     template<class Function>
     void guard(Function&& function) {
         try {
@@ -218,16 +138,29 @@ private:
         game_cards_.clear();
         window_ = gtk_application_window_new(app);
         g_object_add_weak_pointer(G_OBJECT(window_), reinterpret_cast<gpointer*>(&window_));
+        g_signal_connect(window_, "close-request", G_CALLBACK(+[](GtkWindow*, gpointer data) -> gboolean {
+            static_cast<Application*>(data)->pending_action_.reset();
+            return false;
+        }), this);
         gtk_window_set_title(GTK_WINDOW(window_), "FrameRift");
         gtk_window_set_default_size(GTK_WINDOW(window_), 1440, 900);
-        root_ = box(GTK_ORIENTATION_VERTICAL);
-        gtk_window_set_child(GTK_WINDOW(window_), root_);
+        pages_ = gtk_stack_new();
+        gtk_stack_set_hhomogeneous(GTK_STACK(pages_), false);
+        gtk_stack_set_vhomogeneous(GTK_STACK(pages_), false);
+        gtk_stack_set_transition_type(GTK_STACK(pages_), GTK_STACK_TRANSITION_TYPE_CROSSFADE);
+        gtk_stack_set_transition_duration(GTK_STACK(pages_), 140);
+        gtk_widget_set_vexpand(pages_, true);
+        gtk_window_set_child(GTK_WINDOW(window_), pages_);
         gtk_window_set_titlebar(GTK_WINDOW(window_), header());
-        gtk_box_append(GTK_BOX(root_), library_view());
+        gtk_stack_add_named(GTK_STACK(pages_), library_view(), "library");
+        if (!profiler_) profiler_ = std::make_unique<ProfilerView>();
+        gtk_stack_add_named(GTK_STACK(pages_), profiler_->widget(), "profiler");
+        show_page("library");
         auto* keys = gtk_event_controller_key_new();
         g_signal_connect(keys, "key-pressed", G_CALLBACK(+[](GtkEventControllerKey*, guint key, guint, GdkModifierType state, gpointer data) -> gboolean {
             auto& self = *static_cast<Application*>(data);
             if ((state & GDK_CONTROL_MASK) && (key == GDK_KEY_f || key == GDK_KEY_F)) {
+                self.show_page("library");
                 gtk_widget_grab_focus(self.search_);
                 return true;
             }
@@ -236,7 +169,7 @@ private:
         gtk_widget_add_controller(window_, keys);
         select_game(selected_id_, highlight_cover_);
         gtk_window_present(GTK_WINDOW(window_));
-        if (games_.empty()) load_examples(app);
+        if (!library_.game_folders().empty()) refresh_library(app);
     }
 
     GtkWidget* header() {
@@ -249,9 +182,10 @@ private:
         gtk_box_append(GTK_BOX(row), mark);
         gtk_box_append(GTK_BOX(row), label("FrameRift", "brand"));
         gtk_box_append(GTK_BOX(row), gtk_separator_new(GTK_ORIENTATION_VERTICAL));
-        auto* navigation = button("Library", "nav-tab");
-        gtk_widget_add_css_class(navigation, "flat");
-        gtk_box_append(GTK_BOX(row), navigation);
+        library_tab_ = navigation_tab("Library", "library");
+        profiler_tab_ = navigation_tab("Profiler", "profiler");
+        gtk_box_append(GTK_BOX(row), library_tab_);
+        gtk_box_append(GTK_BOX(row), profiler_tab_);
         auto* spacer = box(GTK_ORIENTATION_HORIZONTAL);
         gtk_widget_set_hexpand(spacer, true);
         gtk_box_append(GTK_BOX(row), spacer);
@@ -271,17 +205,46 @@ private:
         refresh_ = gtk_button_new_from_icon_name("view-refresh-symbolic");
         gtk_widget_add_css_class(refresh_, "toolbar-action");
         gtk_widget_set_valign(refresh_, GTK_ALIGN_CENTER);
-        gtk_widget_set_sensitive(refresh_, has_api_key());
+        gtk_widget_set_sensitive(refresh_, !library_.game_folders().empty());
         gtk_widget_set_tooltip_text(refresh_, "Refresh library");
         g_signal_connect(refresh_, "clicked", G_CALLBACK(+[](GtkButton*, gpointer data) {
             auto& self = *static_cast<Application*>(data);
-            self.guard([&] { self.load_examples(gtk_window_get_application(GTK_WINDOW(self.window_))); });
+            self.guard([&] { self.refresh_library(gtk_window_get_application(GTK_WINDOW(self.window_)), true); });
         }), this);
         gtk_box_append(GTK_BOX(row), refresh_);
+        folders_action_ = button("Settings", "toolbar-action");
+        gtk_widget_set_valign(folders_action_, GTK_ALIGN_CENTER);
+        g_signal_connect(folders_action_, "clicked", G_CALLBACK(+[](GtkButton*, gpointer data) {
+            auto& self = *static_cast<Application*>(data);
+            self.guard([&] { self.show_game_folders(); });
+        }), this);
+        gtk_box_append(GTK_BOX(row), folders_action_);
         auto* controls = gtk_window_controls_new(GTK_PACK_END);
         gtk_widget_add_css_class(controls, "window-buttons");
         gtk_box_append(GTK_BOX(row), controls);
         return handle;
+    }
+
+    GtkWidget* navigation_tab(const char* title, const char* page) {
+        auto* tab = button(title, "nav-tab");
+        gtk_widget_add_css_class(tab, "flat");
+        g_object_set_data(G_OBJECT(tab), "page", const_cast<char*>(page));
+        g_signal_connect(tab, "clicked", G_CALLBACK(+[](GtkButton* tab, gpointer data) {
+            auto& self = *static_cast<Application*>(data);
+            self.show_page(static_cast<const char*>(g_object_get_data(G_OBJECT(tab), "page")));
+        }), this);
+        return tab;
+    }
+
+    void show_page(const char* page) {
+        gtk_stack_set_visible_child_name(GTK_STACK(pages_), page);
+        const bool library = g_str_equal(page, "library");
+        gtk_widget_set_visible(search_, library);
+        gtk_widget_set_visible(refresh_, library);
+        for (auto* tab : {library_tab_, profiler_tab_}) {
+            if ((tab == library_tab_) == library) gtk_widget_add_css_class(tab, "active");
+            else gtk_widget_remove_css_class(tab, "active");
+        }
     }
 
     GtkWidget* library_view() {
@@ -314,11 +277,20 @@ private:
         gtk_box_append(GTK_BOX(hero_content), hero_title_);
         auto* actions = box(GTK_ORIENTATION_HORIZONTAL, 14);
         gtk_widget_add_css_class(actions, "hero-actions");
-        auto* play = button("▶   Play", "play-button");
-        gtk_widget_set_size_request(play, 216, -1);
-        gtk_widget_set_sensitive(play, false);
-        gtk_widget_set_tooltip_text(play, "Game launch is not available yet.");
-        gtk_box_append(GTK_BOX(actions), play);
+        play_ = button("▶   Play", "play-button");
+        gtk_widget_set_size_request(play_, 216, -1);
+        g_signal_connect(play_, "clicked", G_CALLBACK(+[](GtkButton*, gpointer data) {
+            auto& self = *static_cast<Application*>(data);
+            self.guard([&] { self.prepare_selected(GameAction::Play); });
+        }), this);
+        gtk_box_append(GTK_BOX(actions), play_);
+        rebuild_ = button("Rebuild", "toolbar-action");
+        gtk_widget_add_css_class(rebuild_, "rebuild-button");
+        g_signal_connect(rebuild_, "clicked", G_CALLBACK(+[](GtkButton*, gpointer data) {
+            auto& self = *static_cast<Application*>(data);
+            self.guard([&] { self.prepare_selected(GameAction::Rebuild); });
+        }), this);
+        gtk_box_append(GTK_BOX(actions), rebuild_);
         gtk_box_append(GTK_BOX(hero_content), actions);
         gtk_overlay_add_overlay(GTK_OVERLAY(hero), hero_content);
         gtk_box_append(GTK_BOX(library_view_), hero);
@@ -387,7 +359,7 @@ private:
         }, this, nullptr);
         gtk_box_append(GTK_BOX(collection), grid_);
         for (const auto& game : games_) gtk_flow_box_append(GTK_FLOW_BOX(grid_), game_card(game, true));
-        empty_ = label(games_.empty() ? "No games yet." : "No games match your search.", "empty-state");
+        empty_ = label(games_.empty() ? "Choose game folders to add your games." : "No games match your search.", "empty-state");
         gtk_widget_set_halign(empty_, GTK_ALIGN_CENTER);
         gtk_box_append(GTK_BOX(collection), empty_);
         gtk_widget_set_visible(empty_, games_.empty());
@@ -451,7 +423,7 @@ private:
         query_ = folded(gtk_editable_get_text(GTK_EDITABLE(search_)));
         gtk_flow_box_invalidate_filter(GTK_FLOW_BOX(grid_));
         gtk_widget_set_visible(recent_section_, has_recent_ && query_.empty());
-        gtk_label_set_text(GTK_LABEL(empty_), games_.empty() ? (loading_ ? "Loading games…" : "No games yet.") : "No games match your search.");
+        gtk_label_set_text(GTK_LABEL(empty_), games_.empty() ? (loading_ ? "Scanning games and loading covers…" : "No games found. Choose a folder containing your games.") : "No games match your search.");
         gtk_widget_set_visible(empty_, std::none_of(games_.begin(), games_.end(), [&](const Game& game) {
             return matches(game);
         }));
@@ -461,6 +433,7 @@ private:
         highlight_cover_ = highlight_cover;
         selected_id_ = id;
         const auto* game = selected();
+        update_game_actions();
         gtk_widget_set_visible(hero_logo_frame_, game && !game->logo_path.empty());
         gtk_widget_set_visible(hero_title_, !game || game->logo_path.empty());
         set_art(hero_logo_, game ? game->logo_path : "");
@@ -479,65 +452,474 @@ private:
         }
     }
 
-    bool has_api_key() const {
-        const auto* key = g_getenv("STEAMGRIDDB_API_KEY");
-        return key && *key;
+    std::vector<Game> visible_games() const {
+        auto games = library_.games();
+        const auto folders = library_.game_folders();
+        std::erase_if(games, [&](const Game& game) {
+            if (game.is_demo) return !folders.empty();
+            if (game.installation_path.empty()) return false;
+            const std::filesystem::path installation(game.installation_path);
+            return std::none_of(folders.begin(), folders.end(), [&](const std::string& folder) {
+                const std::filesystem::path root(folder);
+                return std::mismatch(root.begin(), root.end(), installation.begin(), installation.end()).first == root.end();
+            });
+        });
+        return games;
     }
 
     void rebuild_library() {
-        auto games = library_.games();
+        auto games = visible_games();
         auto search_text = folded_titles(games);
         const auto sort = gtk_drop_down_get_selected(GTK_DROP_DOWN(sort_));
-        gtk_box_remove(GTK_BOX(root_), library_view_);
+        const bool showing_library = gtk_stack_get_visible_child(GTK_STACK(pages_)) == library_view_;
+        gtk_stack_remove(GTK_STACK(pages_), library_view_);
         game_cards_.clear();
         games_ = std::move(games);
         search_text_ = std::move(search_text);
         if (!selected()) selected_id_ = games_.empty() ? "" : games_.front().id;
-        gtk_box_append(GTK_BOX(root_), library_view());
+        gtk_stack_add_named(GTK_STACK(pages_), library_view(), "library");
+        if (showing_library) show_page("library");
         gtk_drop_down_set_selected(GTK_DROP_DOWN(sort_), sort);
         refresh_filter();
         select_game(selected_id_, highlight_cover_);
     }
 
-    struct Download {
-        std::string key;
-        std::filesystem::path directory;
-    };
+    void show_game_folders() {
+        if (folders_window_) {
+            gtk_window_present(GTK_WINDOW(folders_window_));
+            return;
+        }
+        if (saving_settings_) return;
+        folders_window_ = gtk_window_new();
+        g_object_add_weak_pointer(G_OBJECT(folders_window_), reinterpret_cast<gpointer*>(&folders_window_));
+        gtk_window_set_title(GTK_WINDOW(folders_window_), "Library settings");
+        gtk_window_set_transient_for(GTK_WINDOW(folders_window_), GTK_WINDOW(window_));
+        gtk_window_set_modal(GTK_WINDOW(folders_window_), true);
+        gtk_window_set_destroy_with_parent(GTK_WINDOW(folders_window_), true);
+        gtk_window_set_default_size(GTK_WINDOW(folders_window_), 720, 700);
+        auto* content = box(GTK_ORIENTATION_VERTICAL, 20);
+        gtk_widget_add_css_class(content, "folder-settings");
+        gtk_window_set_child(GTK_WINDOW(folders_window_), content);
+        gtk_box_append(GTK_BOX(content), label("Game folders", "section-heading"));
+        gtk_box_append(GTK_BOX(content), label("Choose one or more folders containing your games."));
+        folder_list_ = box(GTK_ORIENTATION_VERTICAL, 12);
+        g_object_add_weak_pointer(G_OBJECT(folder_list_), reinterpret_cast<gpointer*>(&folder_list_));
+        gtk_box_append(GTK_BOX(content), folder_list_);
+        gtk_box_append(GTK_BOX(content), label("Runtime", "section-heading"));
+        const auto settings = library_.launch_settings();
+        anyps5_entry_ = path_entry(content, "AnyPS5 folder", settings.anyps5_directory);
+        runtime_entry_ = path_entry(content, "Runtime libraries", settings.runtime_directory);
+        relinker_entry_ = path_entry(content, "Relinker executable", settings.relinker_path);
+        gtk_box_append(GTK_BOX(content), label("Artwork", "section-heading"));
+        auto* artwork_row = box(GTK_ORIENTATION_HORIZONTAL, 12);
+        auto* artwork_label = label("SteamGridDB API key");
+        gtk_widget_set_size_request(artwork_label, 160, -1);
+        gtk_box_append(GTK_BOX(artwork_row), artwork_label);
+        api_key_entry_ = gtk_password_entry_new();
+        gtk_widget_set_hexpand(api_key_entry_, true);
+        g_object_set(api_key_entry_, "placeholder-text", "Enter API key", nullptr);
+        gtk_box_append(GTK_BOX(artwork_row), api_key_entry_);
+        gtk_box_append(GTK_BOX(artwork_row), gtk_link_button_new_with_label(
+            "https://www.steamgriddb.com/profile/preferences/api", "Get API key"));
+        gtk_box_append(GTK_BOX(content), artwork_row);
+        load_artwork_settings();
+        add_folders_ = button("Add folders…", "toolbar-action");
+        g_object_add_weak_pointer(G_OBJECT(add_folders_), reinterpret_cast<gpointer*>(&add_folders_));
+        gtk_widget_set_halign(add_folders_, GTK_ALIGN_START);
+        g_signal_connect(add_folders_, "clicked", G_CALLBACK(+[](GtkButton*, gpointer data) {
+            auto& self = *static_cast<Application*>(data);
+            self.guard([&] { self.choose_game_folders(); });
+        }), this);
+        auto* actions = box(GTK_ORIENTATION_HORIZONTAL, 12);
+        gtk_widget_set_hexpand(add_folders_, true);
+        gtk_box_append(GTK_BOX(actions), add_folders_);
+        auto* done = button(pending_action_ ? (pending_action_->action == GameAction::Rebuild ? "Save and rebuild" : "Save and play") : "Save", "toolbar-action");
+        g_signal_connect(done, "clicked", G_CALLBACK(+[](GtkButton*, gpointer data) {
+            auto& self = *static_cast<Application*>(data);
+            self.guard([&] { self.save_settings(); });
+        }), this);
+        g_signal_connect(folders_window_, "close-request", G_CALLBACK(+[](GtkWindow*, gpointer data) -> gboolean {
+            auto& self = *static_cast<Application*>(data);
+            if (self.saving_settings_) return true;
+            self.pending_action_.reset();
+            return false;
+        }), this);
+        gtk_box_append(GTK_BOX(actions), done);
+        gtk_box_append(GTK_BOX(content), actions);
+        rebuild_folder_list();
+        gtk_window_present(GTK_WINDOW(folders_window_));
+    }
 
-    void load_examples(GtkApplication* app) {
-        if (loading_ || !has_api_key()) return;
-        auto download = std::make_unique<Download>(Download{g_getenv("STEAMGRIDDB_API_KEY"), artwork_directory_});
-        loading_ = true;
-        gtk_widget_set_sensitive(refresh_, false);
-        gtk_widget_set_tooltip_text(refresh_, "Refreshing library…");
-        refresh_filter();
+    void load_artwork_settings() {
+        auto* app = gtk_window_get_application(GTK_WINDOW(window_));
+        g_application_hold(G_APPLICATION(app));
+        auto* task = g_task_new(app, nullptr, +[](GObject* source, GAsyncResult* result, gpointer data) {
+            auto* entry = GTK_WIDGET(data);
+            GError* error = nullptr;
+            const bool configured = g_task_propagate_boolean(G_TASK(result), &error);
+            g_object_set(entry, "placeholder-text", configured && !error ? "API key saved" : "Enter API key", nullptr);
+            g_clear_error(&error);
+            g_object_unref(entry);
+            g_application_release(G_APPLICATION(source));
+        }, g_object_ref(api_key_entry_));
+        g_task_run_in_thread(task, +[](GTask* task, gpointer, gpointer, GCancellable*) {
+            try {
+                g_task_return_boolean(task, !read_steamgrid_api_key().empty());
+            } catch (...) {
+                g_task_return_new_error(task, g_quark_from_static_string("framerift-artwork"), 1,
+                    "Could not read the saved API key");
+            }
+        });
+        g_object_unref(task);
+    }
+
+    void finish_settings() {
+        const auto action = pending_action_;
+        pending_action_.reset();
+        if (folders_window_) gtk_window_destroy(GTK_WINDOW(folders_window_));
+        if (!window_) return;
+        if (action) {
+            if (std::none_of(games_.begin(), games_.end(), [&](const Game& game) { return game.id == action->game_id; })) {
+                throw std::runtime_error("The game is no longer in your library. Choose a game and try again.");
+            }
+            select_game(action->game_id, highlight_cover_);
+            prepare_selected(action->action);
+        } else {
+            refresh_library(gtk_window_get_application(GTK_WINDOW(window_)), true);
+        }
+    }
+
+    void save_settings() {
+        if (saving_settings_) return;
+        library_.set_launch_settings(LaunchSettings{
+            gtk_editable_get_text(GTK_EDITABLE(anyps5_entry_)),
+            gtk_editable_get_text(GTK_EDITABLE(runtime_entry_)),
+            gtk_editable_get_text(GTK_EDITABLE(relinker_entry_))});
+        const std::string key(gtk_editable_get_text(GTK_EDITABLE(api_key_entry_)));
+        if (key.empty()) {
+            finish_settings();
+            return;
+        }
+        saving_settings_ = true;
+        gtk_widget_set_sensitive(gtk_window_get_child(GTK_WINDOW(folders_window_)), false);
+        auto* app = gtk_window_get_application(GTK_WINDOW(window_));
         g_application_hold(G_APPLICATION(app));
         auto* task = g_task_new(app, nullptr, +[](GObject* source, GAsyncResult* result, gpointer data) {
             auto& self = *static_cast<Application*>(data);
             GError* error = nullptr;
-            std::unique_ptr<std::vector<Game>> games(static_cast<std::vector<Game>*>(g_task_propagate_pointer(G_TASK(result), &error)));
-            self.loading_ = false;
+            g_task_propagate_boolean(G_TASK(result), &error);
+            self.saving_settings_ = false;
             self.guard([&] {
-                if (self.window_) {
-                    gtk_widget_set_sensitive(self.refresh_, self.has_api_key());
-                    gtk_widget_set_tooltip_text(self.refresh_, "Refresh library");
-                    self.refresh_filter();
+                if (error) {
+                    if (self.folders_window_) gtk_widget_set_sensitive(
+                        gtk_window_get_child(GTK_WINDOW(self.folders_window_)), true);
+                    throw std::runtime_error(error->message);
                 }
-                if (error) throw std::runtime_error(error->message);
-                self.library_.cache_demo(*games);
+                self.finish_settings();
+            });
+            g_clear_error(&error);
+            g_application_release(G_APPLICATION(source));
+        }, this);
+        g_task_set_task_data(task, new std::string(key), +[](gpointer data) { delete static_cast<std::string*>(data); });
+        g_task_run_in_thread(task, +[](GTask* task, gpointer, gpointer data, GCancellable*) {
+            try {
+                save_steamgrid_api_key(*static_cast<std::string*>(data));
+                g_task_return_boolean(task, true);
+            } catch (const std::exception& error) {
+                g_task_return_new_error(task, g_quark_from_static_string("framerift-artwork"), 1, "%s", error.what());
+            }
+        });
+        g_object_unref(task);
+    }
+
+    GtkWidget* path_entry(GtkWidget* content, const char* title, const std::string& value) {
+        auto* row = box(GTK_ORIENTATION_HORIZONTAL, 12);
+        auto* name = label(title);
+        gtk_widget_set_size_request(name, 160, -1);
+        gtk_box_append(GTK_BOX(row), name);
+        auto* entry = gtk_entry_new();
+        gtk_widget_set_hexpand(entry, true);
+        gtk_editable_set_text(GTK_EDITABLE(entry), value.c_str());
+        gtk_box_append(GTK_BOX(row), entry);
+        gtk_box_append(GTK_BOX(content), row);
+        return entry;
+    }
+
+    void rebuild_folder_list() {
+        if (!folder_list_) return;
+        while (auto* child = gtk_widget_get_first_child(folder_list_)) gtk_box_remove(GTK_BOX(folder_list_), child);
+        const auto folders = library_.game_folders();
+        if (folders.empty()) gtk_box_append(GTK_BOX(folder_list_), label("No folders selected."));
+        for (const auto& path : folders) {
+            auto* row = box(GTK_ORIENTATION_HORIZONTAL, 12);
+            auto* name = label(path.c_str());
+            gtk_label_set_ellipsize(GTK_LABEL(name), PANGO_ELLIPSIZE_MIDDLE);
+            gtk_widget_set_hexpand(name, true);
+            gtk_widget_set_tooltip_text(name, path.c_str());
+            gtk_box_append(GTK_BOX(row), name);
+            auto* remove = gtk_button_new_from_icon_name("list-remove-symbolic");
+            gtk_widget_set_tooltip_text(remove, "Remove folder");
+            g_object_set_data_full(G_OBJECT(remove), "folder", g_strdup(path.c_str()), g_free);
+            g_signal_connect(remove, "clicked", G_CALLBACK(+[](GtkButton* button, gpointer data) {
+                auto& self = *static_cast<Application*>(data);
+                self.guard([&] {
+                    auto folders = self.library_.game_folders();
+                    const std::string path(static_cast<const char*>(g_object_get_data(G_OBJECT(button), "folder")));
+                    std::erase(folders, path);
+                    self.library_.set_game_folders(folders);
+                    self.rebuild_folder_list();
+                    self.rebuild_library();
+                    gtk_widget_set_sensitive(self.refresh_, !folders.empty());
+                });
+            }), this);
+            gtk_box_append(GTK_BOX(row), remove);
+            gtk_box_append(GTK_BOX(folder_list_), row);
+        }
+        gtk_widget_set_sensitive(folder_list_, !loading_);
+        if (add_folders_) gtk_widget_set_sensitive(add_folders_, !loading_);
+    }
+
+    void choose_game_folders() {
+        auto* dialog = gtk_file_dialog_new();
+        gtk_file_dialog_set_title(dialog, "Add game folders");
+        const auto folders = library_.game_folders();
+        const auto initial = folders.empty() ? std::filesystem::path(g_get_home_dir()) / "Games" : std::filesystem::path(folders.front());
+        auto* folder = g_file_new_for_path(initial.string().c_str());
+        gtk_file_dialog_set_initial_folder(dialog, folder);
+        g_object_unref(folder);
+        auto* app = gtk_window_get_application(GTK_WINDOW(window_));
+        g_application_hold(G_APPLICATION(app));
+        g_object_set_data_full(G_OBJECT(dialog), "application", g_object_ref(app), g_object_unref);
+        gtk_file_dialog_select_multiple_folders(dialog, GTK_WINDOW(folders_window_), nullptr,
+            +[](GObject* source, GAsyncResult* result, gpointer data) {
+                auto& self = *static_cast<Application*>(data);
+                GError* error = nullptr;
+                auto* selected = gtk_file_dialog_select_multiple_folders_finish(GTK_FILE_DIALOG(source), result, &error);
+                self.guard([&] {
+                    if (error) {
+                        if (!g_error_matches(error, GTK_DIALOG_ERROR, GTK_DIALOG_ERROR_DISMISSED)) throw std::runtime_error(error->message);
+                        return;
+                    }
+                    auto folders = self.library_.game_folders();
+                    for (guint index = 0; index < g_list_model_get_n_items(selected); ++index) {
+                        auto* file = G_FILE(g_list_model_get_item(selected, index));
+                        auto* path = g_file_get_path(file);
+                        if (path) folders.emplace_back(path);
+                        g_free(path);
+                        g_object_unref(file);
+                    }
+                    self.library_.set_game_folders(folders);
+                    self.rebuild_folder_list();
+                    if (self.window_) {
+                        self.rebuild_library();
+                        self.refresh_library(gtk_window_get_application(GTK_WINDOW(self.window_)));
+                    }
+                });
+                if (selected) g_object_unref(selected);
+                g_clear_error(&error);
+                auto* app = static_cast<GApplication*>(g_object_get_data(source, "application"));
+                g_application_release(app);
+            }, this);
+        g_object_unref(dialog);
+    }
+
+    void update_game_actions() {
+        const auto* game = selected();
+        const bool available = game && !game->is_demo && !game->installation_path.empty();
+#ifdef __linux__
+        gtk_widget_set_sensitive(play_, available && !game_busy_);
+        gtk_widget_set_sensitive(rebuild_, available && !game_busy_);
+#else
+        gtk_widget_set_sensitive(play_, false);
+        gtk_widget_set_sensitive(rebuild_, false);
+#endif
+        gtk_button_set_label(GTK_BUTTON(play_), game_busy_ && !rebuilding_ ? (preparing_ ? "Preparing…" : "Running") : "▶   Play");
+        gtk_button_set_label(GTK_BUTTON(rebuild_), game_busy_ && rebuilding_ ? "Rebuilding…" : "Rebuild");
+        gtk_widget_set_tooltip_text(play_, available ? "Start the game in its own window" : "Choose an installed game");
+        gtk_widget_set_tooltip_text(rebuild_, available ? "Recreate the game's native executable and modules" : "Choose an installed game");
+    }
+
+    struct PreparationRequest {
+        Game game;
+        LaunchSettings settings;
+        std::filesystem::path cache;
+        std::filesystem::path data;
+        GameAction action;
+        std::filesystem::path conversion_log;
+    };
+
+    struct Session {
+        Application* application;
+        GApplication* app;
+        PreparedGame prepared;
+    };
+
+    void prepare_selected(GameAction action) {
+        if (game_busy_) return;
+        const auto* game = selected();
+        if (!game || game->is_demo || game->installation_path.empty()) return;
+        const auto settings = library_.launch_settings();
+        if (settings.anyps5_directory.empty() || settings.runtime_directory.empty() || settings.relinker_path.empty()) {
+            pending_action_ = PendingAction{game->id, action};
+            show_game_folders();
+            return;
+        }
+        auto request = std::make_unique<PreparationRequest>(PreparationRequest{*game, settings,
+            std::filesystem::path(database_path_).parent_path(),
+            std::filesystem::path(g_get_user_data_dir()) / "framerift", action, {}});
+        game_busy_ = true;
+        preparing_ = true;
+        rebuilding_ = action == GameAction::Rebuild;
+        profiler_->preparing(game->title, rebuilding_);
+        show_page("profiler");
+        update_game_actions();
+        auto* app = gtk_window_get_application(GTK_WINDOW(window_));
+        g_application_hold(G_APPLICATION(app));
+        auto* task = g_task_new(app, nullptr, +[](GObject* source, GAsyncResult* result, gpointer data) {
+            auto& self = *static_cast<Application*>(data);
+            GError* error = nullptr;
+            std::unique_ptr<PreparedGame> prepared(static_cast<PreparedGame*>(g_task_propagate_pointer(G_TASK(result), &error)));
+            self.preparing_ = false;
+            self.guard([&] {
+                if (error) {
+                    self.game_busy_ = false;
+                    if (self.window_) self.update_game_actions();
+                    const auto& request = *static_cast<PreparationRequest*>(g_task_get_task_data(G_TASK(result)));
+                    self.profiler_->failed(error->message, request.conversion_log);
+                    throw std::runtime_error(error->message);
+                }
+                if (static_cast<PreparationRequest*>(g_task_get_task_data(G_TASK(result)))->action == GameAction::Rebuild) {
+                    self.game_busy_ = false;
+                    if (self.window_) self.update_game_actions();
+                    self.profiler_->rebuilt(*prepared);
+                    return;
+                }
+                const auto game_id = prepared->game_id;
+                auto session = std::make_shared<Session>(Session{&self, G_APPLICATION(source), std::move(*prepared)});
+                g_application_hold(session->app);
+                try {
+                    launch_game(session->prepared, [session](std::string_view output) {
+                        session->application->profiler_->output(output);
+                    }, [session](GSubprocess* process, const std::string& error) {
+                        auto& self = *session->application;
+                        self.game_busy_ = false;
+                        self.guard([&] {
+                            if (self.window_) self.update_game_actions();
+                            if (!error.empty()) {
+                                self.profiler_->failed(error);
+                                throw std::runtime_error(error);
+                            }
+                            if (!g_subprocess_get_successful(process)) {
+                                const auto status = g_subprocess_get_if_signaled(process) ?
+                                    "signal " + std::to_string(g_subprocess_get_term_sig(process)) :
+                                    "exit code " + std::to_string(g_subprocess_get_exit_status(process));
+                                self.profiler_->finished("Stopped with " + status);
+                                throw std::runtime_error("The game stopped with " + status + ".\nLog: " + session->prepared.log_path.string());
+                            }
+                            self.profiler_->finished("Exited normally");
+                        });
+                        g_application_release(session->app);
+                    });
+                } catch (const std::exception& error) {
+                    g_application_release(session->app);
+                    self.game_busy_ = false;
+                    if (self.window_) self.update_game_actions();
+                    self.profiler_->failed(error.what());
+                    throw;
+                }
+                self.profiler_->running(session->prepared);
+                self.library_.mark_played(game_id);
                 if (self.window_) self.rebuild_library();
             });
             g_clear_error(&error);
             g_application_release(G_APPLICATION(source));
         }, this);
-        g_task_set_task_data(task, download.release(), +[](gpointer data) { delete static_cast<Download*>(data); });
+        g_task_set_task_data(task, request.release(), +[](gpointer data) { delete static_cast<PreparationRequest*>(data); });
         g_task_run_in_thread(task, +[](GTask* task, gpointer, gpointer data, GCancellable*) {
-            const auto& download = *static_cast<Download*>(data);
+            auto& request = *static_cast<PreparationRequest*>(data);
             try {
-                auto games = std::make_unique<std::vector<Game>>(download_demo_games(download.key, download.directory));
-                g_task_return_pointer(task, games.release(), +[](gpointer data) { delete static_cast<std::vector<Game>*>(data); });
+                auto prepared = std::make_unique<PreparedGame>(prepare_game(request.game, request.settings, request.cache, request.data, request.action == GameAction::Rebuild));
+                g_task_return_pointer(task, prepared.release(), +[](gpointer data) { delete static_cast<PreparedGame*>(data); });
+            } catch (const ConversionError& error) {
+                request.conversion_log = error.log_path;
+                g_task_return_new_error(task, g_quark_from_static_string("framerift-launch"), 1, "%s", error.what());
             } catch (const std::exception& error) {
-                g_task_return_new_error(task, g_quark_from_static_string("framerift-artwork"), 1, "%s", error.what());
+                g_task_return_new_error(task, g_quark_from_static_string("framerift-launch"), 1, "%s", error.what());
+            }
+        });
+        g_object_unref(task);
+    }
+
+    struct Refresh {
+        std::string database;
+        std::vector<std::string> folders;
+        std::filesystem::path artwork;
+        bool refresh_heroes = false;
+    };
+
+    void refresh_library(GtkApplication* app, bool refresh_heroes = false) {
+        if (loading_) {
+            refresh_pending_ = true;
+            refresh_heroes_pending_ = refresh_heroes_pending_ || refresh_heroes;
+            return;
+        }
+        refresh_pending_ = false;
+        refresh_heroes = refresh_heroes || refresh_heroes_pending_;
+        refresh_heroes_pending_ = false;
+        auto folders = library_.game_folders();
+        if (folders.empty()) return;
+        auto refresh = std::make_unique<Refresh>(Refresh{database_path_, std::move(folders), artwork_directory_, refresh_heroes});
+        loading_ = true;
+        gtk_widget_set_sensitive(refresh_, false);
+        gtk_widget_set_sensitive(folders_action_, false);
+        gtk_widget_set_tooltip_text(refresh_, "Refreshing library…");
+        rebuild_folder_list();
+        refresh_filter();
+        g_application_hold(G_APPLICATION(app));
+        auto* task = g_task_new(app, nullptr, +[](GObject* source, GAsyncResult* result, gpointer data) {
+            auto& self = *static_cast<Application*>(data);
+            GError* error = nullptr;
+            std::unique_ptr<std::vector<std::string>> warnings(static_cast<std::vector<std::string>*>(g_task_propagate_pointer(G_TASK(result), &error)));
+            self.loading_ = false;
+            self.guard([&] {
+                if (self.window_) {
+                    gtk_widget_set_sensitive(self.refresh_, !self.library_.game_folders().empty());
+                    gtk_widget_set_sensitive(self.folders_action_, true);
+                    gtk_widget_set_tooltip_text(self.refresh_, "Refresh library");
+                    self.rebuild_library();
+                    self.rebuild_folder_list();
+                }
+                if (error) throw std::runtime_error(error->message);
+                for (const auto& warning : *warnings) std::cerr << "FrameRift: " << warning << '\n';
+            });
+            g_clear_error(&error);
+            if (self.refresh_pending_ && self.window_) {
+                self.refresh_pending_ = false;
+                self.guard([&] { self.refresh_library(GTK_APPLICATION(source)); });
+            }
+            g_application_release(G_APPLICATION(source));
+        }, this);
+        g_task_set_task_data(task, refresh.release(), +[](gpointer data) { delete static_cast<Refresh*>(data); });
+        g_task_run_in_thread(task, +[](GTask* task, gpointer, gpointer data, GCancellable*) {
+            const auto& refresh = *static_cast<Refresh*>(data);
+            try {
+                Library library(refresh.database);
+                auto scan = scan_game_folders(refresh.folders);
+                library.cache_scanned(scan.games);
+                auto games = library.games();
+                std::erase_if(games, [&](const Game& game) {
+                    return std::none_of(scan.games.begin(), scan.games.end(), [&](const Game& scanned) { return scanned.id == game.id; });
+                });
+                if (!games.empty()) {
+                    auto artwork = download_game_artwork(games, read_steamgrid_api_key(), refresh.artwork, scan.warnings,
+                        refresh.refresh_heroes);
+                    std::erase_if(artwork, [](const Game& game) { return game.cover_path.empty() || game.steamgriddb_id <= 0; });
+                    library.cache_artwork(artwork);
+                }
+                auto warnings = std::make_unique<std::vector<std::string>>(std::move(scan.warnings));
+                g_task_return_pointer(task, warnings.release(), +[](gpointer data) { delete static_cast<std::vector<std::string>*>(data); });
+            } catch (const std::exception& error) {
+                g_task_return_new_error(task, g_quark_from_static_string("framerift-library"), 1, "%s", error.what());
             }
         });
         g_object_unref(task);
@@ -550,10 +932,31 @@ private:
     std::string query_;
     bool has_recent_ = false;
     GtkWidget* window_ = nullptr;
-    GtkWidget* root_ = nullptr;
+    GtkWidget* pages_ = nullptr;
+    GtkWidget* library_tab_ = nullptr;
+    GtkWidget* profiler_tab_ = nullptr;
+    std::unique_ptr<ProfilerView> profiler_;
     GtkWidget* refresh_ = nullptr;
+    GtkWidget* folders_action_ = nullptr;
+    GtkWidget* folders_window_ = nullptr;
+    GtkWidget* folder_list_ = nullptr;
+    GtkWidget* add_folders_ = nullptr;
+    GtkWidget* anyps5_entry_ = nullptr;
+    GtkWidget* runtime_entry_ = nullptr;
+    GtkWidget* relinker_entry_ = nullptr;
+    GtkWidget* api_key_entry_ = nullptr;
+    bool saving_settings_ = false;
+    GtkWidget* play_ = nullptr;
+    GtkWidget* rebuild_ = nullptr;
+    bool rebuilding_ = false;
+    std::optional<PendingAction> pending_action_;
+    bool game_busy_ = false;
+    bool preparing_ = false;
     bool highlight_cover_ = true;
     bool loading_ = false;
+    bool refresh_pending_ = false;
+    bool refresh_heroes_pending_ = false;
+    std::string database_path_;
     std::filesystem::path artwork_directory_;
     GtkWidget* search_ = nullptr;
     GtkWidget* sort_ = nullptr;

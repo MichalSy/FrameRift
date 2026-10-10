@@ -11,11 +11,11 @@ Additional attribution terms: see NOTICE in the repository root.
 
 FrameRift should feel like a modern gaming application with precise analysis tools. The library should be visually appealing and easy to navigate. The profiler should show detailed information while keeping the running game central.
 
-The visual direction uses dark graphite surfaces, restrained separators, compact typography, clear proportions and a cyan accent. The angular F symbol suggests a future app icon. A final vector master, small icon sizes and complete wordmark still need development; the images are not a finished icon package.
+The visual direction uses dark graphite surfaces, restrained separators, compact typography, clear proportions and a cyan accent. The angular F mark is used for the application and installed Linux icon. The reference images describe visual targets; broader icon variants and a complete wordmark remain open.
 
 The UI is native. Animations should provide short, smooth transitions and immediate feedback. Library artwork may feel lively; analysis tools must remain calm and readable. UI performance needs measurement, especially when the game and profiler run together.
 
-The committed `main` implementation covers the library and cache. Scanning, launching, profiler output, keyring settings and animated heroes are development work. The embedded game view and frame-analysis layout below remain design targets.
+The implementation covers the library/cache, automatic folder scanning, Linux launch/rebuild, Profiler console output, Settings with keyring credentials and animated heroes. The embedded game view and frame-analysis layout below remain design targets.
 
 ## View 1: Library
 
@@ -32,11 +32,11 @@ The hero provides visual selection and immediate access; it does not replace a s
 
 ### Selecting and launching a game
 
-Clicking a cover selects the game and updates the hero. In the intended launch flow, **Play** uses the normal game profile. **Launch with profiler** adds the required instrumentation options when the configured modified AnyPS5 runtime supports them. Labels must reflect the actual launch mode and available measurement capabilities.
+Clicking a cover selects the game and updates the hero. **Play** prepares missing generated code, launches the game in its own window and opens the Profiler console. **Rebuild** recreates generated code without launching, preserving original files, saves and runtime data. A future **Launch with profiler** action could select instrumentation options supported by the configured modified AnyPS5 runtime; measurement profiles are not yet implemented.
 
 A context menu or small temporary view can expose the executable, game directory, launch profile, artwork mapping and previous recordings. The default view stays focused on selection and launch.
 
-The development scanning flow imports metadata from configured game folders. Different builds with the same title must remain distinguishable without filling the collection with technical filenames. Display titles come from metadata.
+The scanning flow imports metadata from configured game folders. Different builds with the same title must remain distinguishable without filling the collection with technical filenames. Display titles come from metadata.
 
 ### Proportions
 
@@ -60,7 +60,7 @@ In the planned **Profiler** layout, game rendering and input remain active. **Fr
 
 The right panel should explain the selected frame: frame ID, available CPU/GPU times, submission details and, later, draw calls, pipeline changes or shader/pipeline hotspots. Missing data must display "unavailable" or a specific measurement limit. A ten-second aggregate must not look like a single-frame measurement.
 
-The lower area initially targets **Frame times** and **Logs**. The concept's **Imports** and **Tests** tabs are possible additional tools, outside the established first-version scope. Imports could explain runtime calls and missing symbols; Tests could organize repeatable launches and measurement runs. Their data sources and interaction need separate design. The current development profiler provides console output; frame analysis remains planned.
+The lower area initially targets **Frame times** and **Logs**. The concept's **Imports** and **Tests** tabs are possible additional tools, outside the established first-version scope. Imports could explain runtime calls and missing symbols; Tests could organize repeatable launches and measurement runs. Their data sources and interaction need separate design. The current Profiler provides console output; frame analysis remains planned.
 
 ### Live data and frame selection
 
@@ -72,7 +72,7 @@ Pausing the profiler display does not automatically pause the game. Game pause w
 
 Cards may use light hover feedback and subtle selection transitions. Hero changes may briefly crossfade. Sidebars and analysis panels may transition smoothly while remaining immediately usable. Large parallax effects, continuously animated chart backgrounds and constantly jumping numbers would make interaction harder.
 
-SteamGridDB remains the primary artwork source. Animated hero playback is part of the development work; platform support still needs validation. For reproducible measurements, FrameRift should be able to pause its artwork animations or show a still image. See [Artwork](artwork.md).
+SteamGridDB remains the primary artwork source. Animated WebP hero playback is implemented; Windows playback remains unverified. For reproducible measurements, FrameRift should be able to pause its artwork animations or show a still image. See [Artwork](artwork.md).
 
 ## Input and accessibility
 

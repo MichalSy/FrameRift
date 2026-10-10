@@ -9,34 +9,34 @@ Additional attribution terms: see NOTICE in the repository root.
 
 **Launch games. Understand frames.**
 
-FrameRift is an experimental native game library and performance workspace for AnyPS5.
+FrameRift is an experimental native game library and runtime console for AnyPS5.
 
 **Game execution requires our [modified AnyPS5 fork](https://github.com/MichalSy/AnyPS5). FrameRift only works with this modified version.**
 
-## Status
+## Features
 
-- Available on `main`: a GTK4 library with search, sorting, recently played games, a SQLite cache and SteamGridDB artwork. The current sample library does not represent installed or compatible games.
-- In development: automatic game-folder scanning, Linux launch and rebuild, artwork settings with keyring storage, and a Profiler console with session logs.
-- Planned: embedded game windows, frame timing and CPU/GPU analysis.
+- Automatic game-folder scanning, metadata titles, search, sorting and recently played games.
+- SteamGridDB artwork, an offline SQLite/image cache and animated WebP heroes; API credentials stay in the desktop keyring.
+- Linux launch and rebuild, plus a Profiler console with live output and complete session logs. Original games, saves and shared runtime libraries are preserved.
 
-Linux is the current development platform; Windows support remains unverified. Game compatibility depends on AnyPS5 and is not guaranteed by a library entry.
+Windows, actual gameplay compatibility and embedded game windows remain unverified. Frame timing, CPU/GPU analysis and controller navigation are planned.
 
 ## Build and run
 
-Requires a C++20 compiler, CMake 3.20+, Ninja, pkg-config, GTK4 4.12+, SQLite3, libcurl 7.85+, JSON-GLib and `glib-compile-resources`, including development packages. The launcher/profiler work also requires GTK4 VTE 0.70+ (`vte-2.91-gtk4`), GIO, libsecret and libwebp/libwebpdemux; game launch requires Python 3.
+Requires a C++20 compiler, CMake 3.20+, Ninja, pkg-config, GTK4 4.12+, GTK4 VTE 0.70+ (`vte-2.91-gtk4`), SQLite3, libcurl 7.85+, JSON-GLib, GIO, libsecret, libwebp/libwebpdemux and `glib-compile-resources`, including development packages. Game launch also requires Python 3.
 
 ```sh
-cmake -S . -B build -G Ninja
+cmake -S . -B build -G Ninja -DCMAKE_INSTALL_PREFIX="$HOME/.local"
 cmake --build build
 ctest --test-dir build --output-on-failure
 ./build/framerift
 ```
 
-Supply `STEAMGRIDDB_API_KEY` through the process environment to fetch artwork. Cached metadata and images remain available offline. Keep the key outside the repository, database, logs and command arguments.
+In **Settings**, add game folders and configure the modified AnyPS5 checkout, compatible runtime libraries and relinker executable. Save a SteamGridDB API key there to load artwork; `STEAMGRIDDB_API_KEY` overrides the saved key. Cached artwork works offline.
+
+On Linux, `cmake --install build` installs the app, desktop menu entry and icon under the configured prefix. Generated code uses the user cache; saves and session logs use the shared FrameRift data directory, keyed by game ID.
 
 ## Library preview
-
-Screenshot of the development build.
 
 ![FrameRift game library](assets/screenshots/library.png)
 

@@ -11,9 +11,9 @@ Additional attribution terms: see NOTICE in the repository root.
 
 ## Status and product direction
 
-**SteamGridDB is FrameRift's primary artwork source.** The library uses portrait covers and a large hero area with a separate title logo for the selected game. The API client and local SQLite/file cache are implemented on `main`; the API key comes from the process environment.
+**SteamGridDB is FrameRift's primary artwork source.** The library uses portrait covers and a large hero area with a separate title logo for the selected game. The API client and local SQLite/file cache are implemented. Settings stores the API key in the desktop keyring; `STEAMGRIDDB_API_KEY` overrides it.
 
-The development work adds Settings with desktop keyring storage and animated WebP heroes, with static images as a fallback. An explicit library refresh also searches for animations when a hero already exists. In that development implementation, `src/ui/hero.cpp` uses libwebpdemux for timed banner playback, pauses when the library is hidden and respects GTK's animation setting. The image fills the header width proportionally, with vertically centered cropping and a bottom gradient. The remaining sections describe requirements and further planned extensions. Artwork does not determine whether a game is playable.
+Animated WebP heroes use static images as a fallback. An explicit library refresh also searches for animations when a hero already exists. In the implementation, `src/ui/hero.cpp` uses libwebpdemux for timed banner playback, pauses when the library is hidden and respects GTK's animation setting. The image fills the header width proportionally, with vertically centered cropping and a bottom gradient. The remaining sections describe requirements and further planned extensions. Artwork does not determine whether a game is playable.
 
 ## Asset categories
 
@@ -78,7 +78,7 @@ The API supports `static` and `animated` filters; `static` is the default. The c
 
 **Displaying a file and playing its animation are separate capabilities.** A static WebP decoder or ordinary image widget does not establish correct multi-frame playback. Frame timing, blending/disposal, transparency, loops and pausing need verification.
 
-libwebp provides toolkit-independent APIs for animated WebP containers and decoding. The development hero player uses these to produce timed frames for GTK. Windows playback remains unverified. Check whether a toolkit already provides a complete playback path before adding another dependency. [WebP container/animation API](https://developers.google.com/speed/webp/docs/container-api)
+libwebp provides toolkit-independent APIs for animated WebP containers and decoding. The hero player uses these to produce timed frames for GTK. Windows playback remains unverified. Check whether a toolkit already provides a complete playback path before adding another dependency. [WebP container/animation API](https://developers.google.com/speed/webp/docs/container-api)
 
 ### Proposed playback rules
 

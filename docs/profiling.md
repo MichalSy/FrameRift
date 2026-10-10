@@ -7,7 +7,7 @@ Additional attribution terms: see NOTICE in the repository root.
 
 # Profiling and frame analysis
 
-The development Profiler tab shows live console output and the status of an externally launched game; it is not yet part of committed `main`. Its output-only VTE terminal receives merged stdout/stderr directly, interprets terminal colors and progress updates, and retains 5000 scrollback lines. The runtime also writes the complete raw session log; display-only LF-to-CRLF normalization leaves that file unchanged. There is no shell, PTY or file polling. Disable Follow output and scroll up to inspect earlier output; the Copy button, Ctrl+C or Ctrl+Shift+C copies selected text. Logs remain visible after process exit and the terminal clears for the next session. Timing charts, frame analysis and structured telemetry are planned.
+The Profiler tab shows live console output and the status of an externally launched game. Its output-only VTE terminal receives merged stdout/stderr directly, interprets terminal colors and progress updates, and retains 5000 scrollback lines. The runtime also writes the complete raw session log at `<framerift-data-root>/logs/<game-id>/<session-id>/game.log`; display-only LF-to-CRLF normalization leaves that file unchanged. There is no shell, PTY or file polling. Disable Follow output and scroll up to inspect earlier output; the Copy button, Ctrl+C or Ctrl+Shift+C copies selected text. Logs remain visible after process exit and the terminal clears for the next session. Timing charts, frame analysis and structured telemetry are planned.
 
 Confirmed AnyPS5 details refer to [upstream `197ffac97203d715a258a28b432fa2eedbf8be6f`](https://github.com/boykopovar/AnyPS5/tree/197ffac97203d715a258a28b432fa2eedbf8be6f). This source snapshot is not a FrameRift runtime benchmark. See [AnyPS5 integration](anyps5-integration.md), [Controller and input](controller-input.md) and the [project overview](../README.md).
 
@@ -40,7 +40,7 @@ The code's presence does not prove that every distributed runtime library set in
 
 The header explicitly describes metrics as inclusive. Background metrics also summarize work completed since the preceding flip. Source: [Capture and metric format](https://github.com/boykopovar/AnyPS5/blob/197ffac97203d715a258a28b432fa2eedbf8be6f/core/libs/prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp#L154).
 
-The present loop determines the interval between consecutive flip completions and passes the record to the timing logger. The logger writes asynchronously to a buffered file and flushes periodically. File monitoring can therefore lag behind the current game state. Sources: [Present loop](https://github.com/boykopovar/AnyPS5/blob/197ffac97203d715a258a28b432fa2eedbf8be6f/core/libs/prx/libSceVideoOut/src/VideoOutDriver.cpp#L587), [Timing logger](https://github.com/boykopovar/AnyPS5/blob/197ffac97203d715a258a28b432fa2eedbf8be6f/core/libs/prx/libSceVideoOut/include/FrameTimingLog.hpp#L18).
+The present loop determines the interval between consecutive flip completions and passes the record to the timing logger. If enabled, the runtime writes `frame-timing.log` relative to its game working directory, currently `<framerift-data-root>/saves/<game-id>/`; FrameRift does not yet import this file. The logger writes asynchronously to a buffered file and flushes periodically. File monitoring can therefore lag behind the current game state. Sources: [Present loop](https://github.com/boykopovar/AnyPS5/blob/197ffac97203d715a258a28b432fa2eedbf8be6f/core/libs/prx/libSceVideoOut/src/VideoOutDriver.cpp#L587), [Timing logger](https://github.com/boykopovar/AnyPS5/blob/197ffac97203d715a258a28b432fa2eedbf8be6f/core/libs/prx/libSceVideoOut/include/FrameTimingLog.hpp#L18).
 
 ## Naming FPS and frame time accurately
 
@@ -72,7 +72,7 @@ GPU results may become available only after a later flip. The existing timing co
 
 An initial measurement view could use existing data without requiring a full debugger:
 
-1. Game session with process status and live logs; available in the development console.
+1. Game session with process status and live logs; available in the console.
 2. Import or ongoing monitoring of the timing file from a compatible library set.
 3. Flip-interval chart and statistics with explicit calculations.
 4. Details of a selected frame-timing record.

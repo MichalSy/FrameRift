@@ -4,6 +4,7 @@
 // Additional attribution terms: see NOTICE in the repository root.
 
 #include "library/library.hpp"
+#include "library/steamgriddb.hpp"
 
 #include <sqlite3.h>
 
@@ -63,14 +64,36 @@ framerift::Game preview(std::int64_t id, const char* title, std::int64_t last_pl
     return game;
 }
 
+void game_fixture(const std::filesystem::path& directory, const char* metadata) {
+    std::filesystem::create_directories(directory / "sce_sys");
+    std::ofstream(directory / "eboot.bin") << "Original executable";
+    std::ofstream(directory / "sce_sys/param.json") << metadata;
+}
+
 } // namespace
 
 int main() {
     const auto unique = std::chrono::steady_clock::now().time_since_epoch().count();
     const auto directory = std::filesystem::temp_directory_path() / ("framerift-cache-check-" + std::to_string(unique));
     try {
+        require_rejected([] { framerift::save_steamgrid_api_key(""); });
+        require_rejected([] { framerift::save_steamgrid_api_key("invalid\nkey"); });
+        require_rejected([] { framerift::save_steamgrid_api_key(std::string("invalid\0key", 11)); });
+#ifdef __linux__
+        const auto* previous_key = std::getenv("STEAMGRIDDB_API_KEY");
+        const bool had_key = previous_key != nullptr;
+        const std::string saved_key = previous_key ? previous_key : "";
+        require(setenv("STEAMGRIDDB_API_KEY", "framerift-check-override", 1) == 0, "Could not set API key override");
+        require(framerift::read_steamgrid_api_key() == "framerift-check-override", "API key environment override was ignored");
+        if (had_key) setenv("STEAMGRIDDB_API_KEY", saved_key.c_str(), 1);
+        else unsetenv("STEAMGRIDDB_API_KEY");
+#endif
         std::filesystem::create_directories(directory);
         const auto demo_path = directory / "nested/demo.sqlite";
+        const framerift::LaunchSettings launch_settings{
+            (directory / "Any PS5").string(), (directory / "runtime").string(), (directory / "build/relinker").string(),
+        };
+        std::filesystem::create_directories(launch_settings.anyps5_directory);
         const std::vector<framerift::Game> previews{
             preview(5454475, "Astro Bot", 42),
             preview(5266059, "Ratchet & Clank: Rift Apart", 0),
@@ -78,6 +101,12 @@ int main() {
         {
             framerift::Library library(demo_path.string());
             require(library.games().empty(), "A new cache should start empty");
+            const auto unset = library.launch_settings();
+            require(unset.anyps5_directory.empty() && unset.runtime_directory.empty() && unset.relinker_path.empty(),
+                "A new cache should not invent launch settings");
+            auto settings = launch_settings;
+            settings.anyps5_directory += "/.";
+            library.set_launch_settings(settings);
             library.cache_demo(previews);
             const auto games = library.games();
             require(games.size() == 2 && games.front().id == previews.front().id,
@@ -92,10 +121,22 @@ int main() {
             require(games.front().last_played == 42 && games.back().last_played == 0,
                 "Recent games were not persisted");
         }
-        require(execute(demo_path, "PRAGMA user_version") == 2, "New cache schema version is wrong");
+        require(execute(demo_path, "PRAGMA user_version") == 3, "New cache schema version is wrong");
         {
             framerift::Library library(demo_path.string());
             require(library.games().size() == 2, "Cached API records disappeared on restart");
+            const auto settings = library.launch_settings();
+            require(settings.anyps5_directory == launch_settings.anyps5_directory &&
+                settings.runtime_directory == launch_settings.runtime_directory && settings.relinker_path == launch_settings.relinker_path,
+                "Launch settings were not canonicalized or persisted");
+            auto invalid_settings = settings;
+            invalid_settings.anyps5_directory = "/different";
+            invalid_settings.relinker_path = std::string("invalid\0path", 12);
+            require_rejected([&] { library.set_launch_settings(invalid_settings); });
+            require(library.launch_settings().anyps5_directory == settings.anyps5_directory,
+                "Rejected launch settings partially replaced saved paths");
+            library.set_launch_settings({});
+            require(library.launch_settings().runtime_directory.empty(), "Launch settings could not be cleared");
             auto invalid = previews;
             invalid.front().cover_path.clear();
             require_rejected([&] { library.cache_demo(invalid); });
@@ -132,14 +173,15 @@ int main() {
             require_rejected([&] { library.cache_demo(collision); });
             require(library.games().size() == 3 && library.games().front().last_played == 99,
                 "Failed preview refresh did not roll back");
+            library.set_launch_settings(launch_settings);
         }
-        require(execute(existing_path, "PRAGMA user_version") == 2, "Legacy cache was not migrated");
+        require(execute(existing_path, "PRAGMA user_version") == 3, "Legacy cache was not migrated");
         require(execute(existing_path, "SELECT COUNT(*) FROM cache_metadata WHERE key = 'demo_seeded'") == 0 &&
             execute(existing_path, "SELECT COUNT(*) FROM cache_metadata WHERE key = 'user_setting' AND value = 'keep'") == 1,
             "Migration did not preserve user metadata or remove the old seed flag");
 
         const auto invalid_path = directory / "invalid.sqlite";
-        execute(invalid_path, "PRAGMA user_version = 3");
+        execute(invalid_path, "PRAGMA user_version = 4");
         require_rejected([&] { framerift::Library library(invalid_path.string()); });
         execute(invalid_path, "PRAGMA user_version = 0; CREATE TABLE games (id TEXT)");
         require_rejected([&] { framerift::Library library(invalid_path.string()); });
@@ -147,12 +189,117 @@ int main() {
         require_rejected([&] { framerift::Library library(invalid_path.string()); });
         execute(invalid_path, "PRAGMA user_version = 2");
         require_rejected([&] { framerift::Library library(invalid_path.string()); });
+        execute(invalid_path, "PRAGMA user_version = 3");
+        require_rejected([&] { framerift::Library library(invalid_path.string()); });
         const auto unrelated_path = directory / "unrelated.sqlite";
         execute(unrelated_path, "CREATE TABLE unrelated (value TEXT)");
         require_rejected([&] { framerift::Library library(unrelated_path.string()); });
         const auto corrupt_path = directory / "corrupt.sqlite";
         std::ofstream(corrupt_path) << "This is not a SQLite database";
         require_rejected([&] { framerift::Library library(corrupt_path.string()); });
+
+        const auto first_folder = directory / "games";
+        const auto second_folder = directory / "other games";
+        const auto first_game = first_folder / "not-the-game-title";
+        game_fixture(first_game,
+            R"({"titleId":"PPSA01288","localizedParameters":{"defaultLanguage":"de-DE", "de-DE":{"titleName":"German title"},"en-GB":{"titleName":"Metadata title"}}})");
+        game_fixture(first_game / "assets/hidden game",
+            R"({"titleId":"PPSA99999","titleName":"Do not scan assets"})");
+        game_fixture(first_folder / "nested/second",
+            R"({"titleId":"PPSA01880","localizedParameters":{"defaultLanguage":"fr-FR","fr-FR":{"titleName":"Default title"},"de-DE":{"titleName":"Other title"}}})");
+        game_fixture(second_folder / "duplicate",
+            R"({"titleId":"PPSA01288","titleName":"Duplicate installation"})");
+        game_fixture(second_folder / "invalid-id", R"({"titleId":"../unsafe","titleName":"Invalid"})");
+        game_fixture(second_folder / "missing-title", R"({"titleId":"PPSA00001"})");
+        std::filesystem::create_directory_symlink(first_folder, first_folder / "loop");
+        const std::vector<std::string> folders{first_folder.string(), (first_folder / ".").string(),
+            first_game.string(), second_folder.string()};
+        const auto scanned = framerift::scan_game_folders(folders);
+        require(scanned.games.size() == 2 && scanned.warnings.size() == 2,
+            "Folder scan did not deduplicate IDs, ignore asset subtrees or report invalid metadata");
+        require(scanned.games.front().id == "PPSA01288" && scanned.games.front().title == "Metadata title" &&
+            scanned.games.back().title == "Default title" && !scanned.games.front().is_demo &&
+            scanned.games.front().installation_path == std::filesystem::canonical(first_game).string(),
+            "Scan did not use stable metadata IDs, localized titles and canonical installation paths");
+        const auto partial = framerift::scan_game_folders({(directory / "unavailable").string(), first_folder.string()});
+        require(partial.games.size() == 2 && partial.warnings.size() == 1,
+            "An unavailable game folder prevented valid folders from being scanned");
+        const auto scanned_path = directory / "scanned.sqlite";
+        {
+            framerift::Library library(scanned_path.string());
+            library.set_game_folders(folders);
+            require(library.game_folders().size() == 3 && library.game_folders().front() == first_folder.string(),
+                "Game folder configuration was not canonicalized and deduplicated");
+            require_rejected([&] { library.set_game_folders({""}); });
+            require(library.game_folders().size() == 3, "Invalid folder configuration changed saved folders");
+            library.cache_demo(previews);
+            library.cache_scanned(scanned.games);
+            require(library.games().size() == 4, "Offline scanning removed previews or omitted installed games");
+            execute(scanned_path, "UPDATE games SET last_played = 100, cover_path = 'cached.png', "
+                "steamgriddb_id = 123 WHERE id = 'PPSA01288'");
+            library.cache_scanned(partial.games);
+            const auto games = library.games();
+            require(games.front().id == "PPSA01288" && games.front().last_played == 100 &&
+                games.front().cover_path == "cached.png" && games.front().steamgriddb_id == 123,
+                "A scan overwrote play history or cached artwork");
+            library.cache_scanned({});
+            require(library.games().size() == 4, "An empty scan erased cache records");
+            require_rejected([&] { library.cache_scanned({scanned.games.front(), scanned.games.front()}); });
+            require(library.games().size() == 4, "A rejected scan changed cached records");
+            require_rejected([&] { library.mark_played(previews.front().id); });
+            require_rejected([&] { library.mark_played("PPSA99999"); });
+            require(library.games().front().last_played == 100, "A rejected launch changed play history");
+
+            auto artwork = scanned.games.front();
+            artwork.title = "Provider title must not replace metadata";
+            artwork.cover_path = "api-cover.png";
+            artwork.hero_path = "api-hero.png";
+            artwork.steamgriddb_id = 456;
+            artwork.source_url = "https://www.steamgriddb.com/game/456";
+            auto stale = artwork;
+            stale.installation_path = (directory / "old installation").string();
+            library.cache_artwork({stale});
+            require(library.games().size() == 4 && library.games().front().cover_path == "cached.png",
+                "Stale artwork changed an installed game or erased previews");
+            library.cache_artwork({artwork});
+            const auto updated = library.games();
+            require(updated.size() == 2 && updated.front().title == "Metadata title" &&
+                updated.front().cover_path == "api-cover.png" && updated.front().hero_path == "api-hero.png" &&
+                updated.front().last_played == 100 && updated.front().steamgriddb_id == 456,
+                "API artwork did not replace previews while preserving metadata and play history");
+            library.cache_scanned(partial.games);
+            require(library.games().front().cover_path == "api-cover.png", "A later scan replaced downloaded covers");
+            const auto before_launch = std::chrono::duration_cast<std::chrono::seconds>(
+                std::chrono::system_clock::now().time_since_epoch()).count();
+            library.mark_played("PPSA01880");
+            const auto played = library.games();
+            require(played.front().id == "PPSA01880" && played.front().last_played >= before_launch &&
+                played.front().title == "Default title" && played.back().last_played == 100 &&
+                played.back().cover_path == "api-cover.png", "Play time did not update recent ordering or changed other fields");
+        }
+        {
+            framerift::Library library(scanned_path.string());
+            require(library.game_folders().size() == 3 && library.games().size() == 2,
+                "Installed games or configured folders disappeared on restart");
+        }
+
+        const auto previous_path = directory / "version-two.sqlite";
+        execute(previous_path,
+            "CREATE TABLE games (id TEXT PRIMARY KEY NOT NULL, title TEXT NOT NULL, subtitle TEXT NOT NULL,"
+            "genre TEXT NOT NULL, cover_path TEXT NOT NULL, hero_path TEXT NOT NULL, landscape_path TEXT NOT NULL,"
+            "last_played INTEGER NOT NULL DEFAULT 0, is_demo INTEGER NOT NULL DEFAULT 0,"
+            "steamgriddb_id INTEGER NOT NULL DEFAULT 0, logo_path TEXT NOT NULL DEFAULT '', source_url TEXT NOT NULL DEFAULT '');"
+            "CREATE TABLE cache_metadata (key TEXT PRIMARY KEY NOT NULL, value TEXT NOT NULL);"
+            "INSERT INTO games VALUES ('PPSA01288', 'Existing game', '', 'Game', 'cover.png', 'hero.png', 'wide.png', 99, 0, 123, 'logo.png', 'source');"
+            "PRAGMA user_version = 2;");
+        {
+            framerift::Library library(previous_path.string());
+            const auto games = library.games();
+            require(games.size() == 1 && games.front().last_played == 99 && games.front().cover_path == "cover.png" &&
+                games.front().steamgriddb_id == 123 && games.front().installation_path.empty() && library.game_folders().empty(),
+                "Version two migration changed cached records");
+        }
+        require(execute(previous_path, "PRAGMA user_version") == 3, "Version two cache was not migrated");
 
         std::filesystem::remove_all(directory);
         std::cout << "Library cache check passed\n";

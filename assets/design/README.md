@@ -22,4 +22,4 @@ SteamGridDB ist die primäre geplante Artwork-Quelle für die Anwendung. Die off
 
 ## Rechte und Weiterverwendung
 
-Spielgrafiken, Titellogos und Marken behalten ihre jeweiligen Rechte. Die öffentliche Verfügbarkeit eines Bildes oder seine Aufnahme auf SteamGridDB erteilt nicht automatisch eine allgemeine Lizenz für sämtliche Weiterverwendungen. Eine zukünftige FrameRift-Code-Lizenz würde solche Drittanbieter-Assets nicht mitlizenzieren. Das Repository enthält die zwei zusammengesetzten Designbilder, keine Sammlung originaler Spiel-Assets.
+Spielgrafiken, Titellogos und Marken behalten ihre jeweiligen Rechte. Die öffentliche Verfügbarkeit eines Bildes oder seine Aufnahme auf SteamGridDB erteilt nicht automatisch eine allgemeine Lizenz für sämtliche Weiterverwendungen. FrameRift's [MIT license](../../LICENSE) does not cover third-party artwork, logos or trademarks. Das Repository enthält die zwei zusammengesetzten Designbilder, keine Sammlung originaler Spiel-Assets.

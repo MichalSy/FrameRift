@@ -68,7 +68,7 @@ Die Mindestversionen der eingebauten Bausteine stehen oben und werden von CMake 
 
 Ein Packaging-Spike entscheidet zwischen passenden Werkzeugen für den GTK- oder Qt-Pfad. MSYS2, gvsbuild, Paketmanager oder andere Dependency-Strategien sind zu bewerten; es gibt derzeit keine festgelegte Kombination mit einem bestimmten Windows-Compiler. Ein Endnutzerpaket sollte seine nötigen Laufzeitbibliotheken nachvollziehbar mitbringen.
 
-Ein vollständiges Lizenzinventar wird mit der Auslieferung erstellt. Besonders ein Toolkit-Wechsel muss die jeweiligen Auslieferungsbedingungen berücksichtigen. Die Projektlizenz ist noch nicht beschlossen.
+Ein vollständiges Lizenzinventar wird mit der Auslieferung erstellt. Besonders ein Toolkit-Wechsel muss die jeweiligen Auslieferungsbedingungen berücksichtigen. Original FrameRift code and documentation use the [MIT license](../LICENSE); dependencies retain their own licenses.
 
 ## Primärquellen
 

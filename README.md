@@ -27,17 +27,11 @@ ctest --test-dir build --output-on-failure
 
 Supply `STEAMGRIDDB_API_KEY` through the process environment to fetch artwork. Cached metadata and images remain available offline. Keep the key outside the repository, database, logs and command arguments.
 
-## Design concepts
+## Library preview
 
-These mockups illustrate the intended design. Their games and measurements do not establish runtime support or compatibility.
+Screenshot of the development build.
 
-### Library
-
-![Library concept with selected-game artwork, recently played games and covers](assets/design/library.png)
-
-### Planned game and profiler view
-
-![Game and profiler concept with frame analysis and timing charts](assets/design/profiler.png)
+![FrameRift game library](assets/screenshots/library.png)
 
 ## Documentation
 
@@ -47,4 +41,8 @@ These mockups illustrate the intended design. Their games and measurements do no
 - [Profiling](docs/profiling.md), [input](docs/controller-input.md) and [artwork](docs/artwork.md)
 - [Roadmap](docs/roadmap.md), [open questions](docs/decisions-and-open-questions.md) and [image sources](assets/design/README.md)
 
-Contributions are welcome; see [CONTRIBUTING.md](CONTRIBUTING.md). FrameRift is an independent project. Its license is not yet defined; third-party artwork and trademarks retain their respective rights.
+Contributions are welcome; see [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## License
+
+FrameRift code and documentation are licensed under [MIT](LICENSE). AnyPS5 remains under [GPL-2.0-only](https://github.com/MichalSy/AnyPS5/blob/main/LICENSE). Third-party artwork and trademarks retain their respective rights and are excluded from FrameRift's MIT license.

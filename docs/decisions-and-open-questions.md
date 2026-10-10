@@ -42,7 +42,7 @@ Arbeitsannahmen sind keine endgültigen Abhängigkeitsentscheidungen. Besonders 
 - Welche UI-Bibliothek stellt animiertes WebP auf beiden Zielplattformen zuverlässig und effizient dar?
 - Wie werden Spielausgaben, unterschiedliche Builds und Startprofile möglichst einfach importiert und angezeigt?
 - Wie werden SteamGridDB-Zugangsdaten lokal gespeichert, und welche Variante der Artwork-Auswahl ist für Nutzer am verständlichsten?
-- Welche Lizenz soll zukünftiger eigener Code erhalten, und wie wird das fertige Paket mit seinen Abhängigkeiten ausgeliefert?
+- Original FrameRift code and documentation use [MIT](../LICENSE). Dependency distribution requirements remain to be reviewed.
 
 ## Noch nicht für den ersten Release zugesagt
 

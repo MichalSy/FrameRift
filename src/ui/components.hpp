@@ -48,9 +48,10 @@ struct SegmentedControl {
     GtkWidget* root;
     GtkWidget* first;
     GtkWidget* second;
+    GtkWidget* third;
 };
 
-inline SegmentedControl segmented_control(const char* first, const char* second) {
+inline SegmentedControl segmented_control(const char* first, const char* second, const char* third = nullptr) {
     auto* root = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
     gtk_widget_add_css_class(root, "segmented-control");
     auto* a = gtk_toggle_button_new_with_label(first);
@@ -59,7 +60,13 @@ inline SegmentedControl segmented_control(const char* first, const char* second)
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(a), true);
     gtk_box_append(GTK_BOX(root), a);
     gtk_box_append(GTK_BOX(root), b);
-    return {root, a, b};
+    GtkWidget* c = nullptr;
+    if (third) {
+        c = gtk_toggle_button_new_with_label(third);
+        gtk_toggle_button_set_group(GTK_TOGGLE_BUTTON(c), GTK_TOGGLE_BUTTON(a));
+        gtk_box_append(GTK_BOX(root), c);
+    }
+    return {root, a, b, c};
 }
 
 inline GtkWidget* header_overlay(GtkWidget* content, GtkWidget* header) {

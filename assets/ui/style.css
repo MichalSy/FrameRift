@@ -85,9 +85,10 @@ button { box-shadow: none; text-shadow: none; }
 .monitor-heading { font-size: 17px; font-weight: 600; color: #edf4fa; }
 .frame-value { font-size: 12px; color: #e1edf6; font-feature-settings: "tnum"; }
 .resource-row > flowboxchild { padding: 0; border: none; background: transparent; }
-.consumer-frame { color: #24d4eb; font-size: 12px; padding: 5px 8px; border: 1px solid #009fb9; border-radius: 3px; }
 .consumer-pending { font-size: 11px; color: #ffc75b; }
-.consumer-cell { font-size: 13px; padding: 8px 0; border-bottom: 1px solid #345366; }
+.consumer-cell { font-size: 13px; }
+.consumer-row { padding: 8px 0; border-bottom: 1px solid #345366; }
+.consumer-row.consumer-column { padding-top: 0; }
 .consumer-column { color: #a8c0d2; }
 .numeric, .resource-value { font-feature-settings: "tnum"; }
 .consumer-bar trough { min-height: 14px; border: none; border-radius: 4px; background: #203b4f; }
@@ -101,16 +102,23 @@ button { box-shadow: none; text-shadow: none; }
 .resource-gauge progress { min-width: 0; margin: 0; padding: 0; min-height: 8px; border: none; border-radius: 4px; background: #24d4eb; }
 .resource-gauge.over-budget progress { background: #e4ac5a; }
 .resource-panel.stale .resource-gauge { opacity: .5; }
-.profiler-footer { border-top: 1px solid #345366; padding: 16px 0 0; }
 .console-frame { border: 1px solid #294656; border-radius: 4px; background: #122431; }
 .profiler-console { padding: 0 24px 24px; }
 .console-empty { color: #8fa8ba; font-size: 15px; }
 
 .chart-header-overlay { background: #102332; }
 .profiler-page .segmented-control button { border-radius: 0; min-width: 40px; padding: 5px 12px; }
-/* The second button owns the shared divider; no overlapping borders. */
-.profiler-page .segmented-control button:first-child { border-radius: 3px 0 0 3px; border-right-width: 0; }
+/* Each following button owns its shared divider; no overlapping borders. */
+.profiler-page .segmented-control button:not(:last-child) { border-right-width: 0; }
+.profiler-page .segmented-control button:first-child { border-radius: 3px 0 0 3px; }
 .profiler-page .segmented-control button:last-child { border-radius: 0 3px 3px 0; }
 .profiler-page .segmented-control button:checked { background: #14516a; border-color: #24d4eb; color: #effbff; }
 .profiler-page .segmented-control button:checked + button { border-left-color: #24d4eb; }
 .profiler-page .segmented-control button:focus-visible { outline: 2px solid #a1e9f3; outline-offset: -3px; }
+
+.chart-unit { font-size: 12px; font-weight: 600; color: #edf4fa; }
+.chart-stale { font-size: 12px; color: #ffc75b; }
+
+.profiler-info { color: #edf4fa; }
+.profiler-info contents { background: #102332; border: 1px solid #294656; border-radius: 4px; padding: 16px; }
+.profiler-info arrow { background: #102332; border-color: #294656; }

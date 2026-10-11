@@ -21,11 +21,13 @@ The current layout was checked in an isolated GTK window using the actual Profil
 
 ![Wide native fixture: FPS and checked controls](../assets/screenshots/profiler-controls-wide.png)
 
-![Narrow native fixture: flip interval and unchecked controls](../assets/screenshots/profiler-controls-narrow.png)
+![Narrow native fixture: flip interval, stale data and unchecked controls](../assets/screenshots/profiler-controls-narrow.png)
 
 ![Logs selection using the same segmented control](../assets/screenshots/profiler-logs-control.png)
 
 ![Narrow native fixture: scrolled resources](../assets/screenshots/profiler-controls-resources.png)
+
+![Native diagnostics popup](../assets/screenshots/profiler-diagnostics-popup.png)
 
 ## Visual direction
 
@@ -35,14 +37,16 @@ Cards use 16 px internal padding and 16 px section/column gaps. Shader work and 
 
 ## Verification
 
-Live/Logs reuses the chart segmented control. The shared divider is drawn once and follows the selected side; screenshots verify complete outlines for both left and right selection. Native mouse clicks verify switching to Logs and returning to Live while preserving chart mode. The chart drawing area is 190 px high and the FPS axis is fixed at 0–75 with labels at 13, 30 and 60 and a brighter bold unit label; interval mode still scales automatically.
+The chart header uses a native title/unit column with 8 px plot separation. Bottom axis labels end 6 px above the drawing-area edge, followed by the shared 16 px card padding. The consumer header shares the segmented control for Frame/Driver CPU/GPU; its frame number is plain text. Consumer rows use fixed column widths, 16 px gaps and full-row dividers; the card keeps natural height rather than stretching below the last row. Unavailable CPU/GPU modes stay disabled.
 
-The revised controls were inspected at 1500 × 1250 and 1100 × 850. Both mode captions remain readable with a ten-digit frame ID and a three-digit worst interval. Native toggling confirms mutual exclusion and redraw in both modes. Follow live and Monitoring were checked on and off; the indicator allocation is 16 × 16 without inherited theme padding. Disabled controls remain distinct from enabled options. Narrow layouts stack the resource column; scrolling exposes the complete shader/memory cards without horizontal overflow. The top strip contains only the four metrics, with labels beside their values and smaller baseline-aligned units. It is about 20 px shorter than the stacked layout. Visible millisecond values round to integers, with full precision in tooltips; sample counts, coverage and observation-window state sit in the bottom status row, verified in wide and scrolled narrow layouts. All dashboard card containers share one factory and CSS class, 16 px padding/gaps and 4 px corners. Theme-independent button foregrounds are explicit.
+Live/Logs reuses the chart segmented control. The shared divider is drawn once and follows the selected side; screenshots verify complete outlines for both left and right selection. Native mouse clicks verify switching to Logs and returning to Live while preserving chart mode. The chart drawing area is 174 px high and the FPS axis is fixed at 0–75 with labels at 13, 30 and 60 and a native unit label beneath the title; interval mode still scales automatically.
+
+The revised controls were inspected at 1500 × 1250 and 1100 × 850. Both mode captions remain readable with a ten-digit frame ID and a three-digit worst interval. Native toggling confirms mutual exclusion and redraw in both modes. Follow live and Monitoring were checked on and off; the indicator allocation is 16 × 16 without inherited theme padding. Disabled controls remain distinct from enabled options. Narrow layouts stack the resource column; scrolling exposes the complete shader/memory cards without horizontal overflow. The top strip contains only the four metrics, with labels beside their values and smaller baseline-aligned units. It is about 20 px shorter than the stacked layout. Visible millisecond values round to integers, with full precision in tooltips; sample counts, coverage, observation-window state and receive age live in the Info popup. There is no footer. A stale/missing-frame badge beside the chart unit was checked at narrow width. All dashboard card containers share one factory and CSS class, 16 px padding/gaps and 4 px corners. Theme-independent button foregrounds are explicit.
 
 - Native shell check: connection status remains beside Profiler on both pages; search and refresh are visible in Library and hidden in Profiler. Branding, Settings and window controls keep the shared shell styling.
 - Native build succeeds (`cmake --build build -j2`); the previous workspace implementation also passed a full clean build.
 - Bridge and game MCP checks pass. Added frame-rate checks cover 60 FPS, a 2.5 ms catch-up interval, a five-second stall, loss and epoch changes.
-- Native scrolling checked at a shorter height. The right-edge scrollbar stays outside card padding, and scrolling reaches the complete shader/memory cards and footer. A taller window keeps the same resource spacing.
+- Native scrolling checked at a shorter height. The right-edge scrollbar stays outside card padding, and scrolling reaches the complete shader/memory cards. A taller window keeps the same resource spacing.
 - Native monitoring, FPS/interval toggle, selection/Follow live, Logs and Library navigation checked while the game continued running; session control used Codex FrameRift MCP.
 - Done counters use process totals; inactive windows do not reset them. Elapsed uses the separately labeled observed window.
 - Missing data uses `–`; actual zero memory remains `0 B`. Native telemetry does not manufacture example rankings or timings.

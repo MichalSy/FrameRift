@@ -54,8 +54,8 @@ void chart_text(cairo_t* context, double x, double y, const std::string& text, b
 
 constexpr double chart_left = 54;
 constexpr double chart_right = 22;
-constexpr double chart_header_gap = 16;
-constexpr double chart_bottom = 40;
+constexpr double chart_header_gap = 8;
+constexpr double chart_bottom = 24;
 
 std::optional<double> chart_value(const MonitoringSnapshot& snapshot, std::size_t index, bool fps) {
     if (fps) return monitoring_fps_at(snapshot.samples, index);
@@ -140,7 +140,13 @@ ProfilerView::ProfilerView(std::function<void(bool)> request_monitoring)
         gtk_label_set_selectable(GTK_LABEL(endpoint), true);
         gtk_box_append(GTK_BOX(bridge), endpoint);
     }
+    window_state_ = label("Last 1 s", "resource-scope");
+    coverage_ = label("– / – samples · –", "monitor-coverage");
+    freshness_ = label("Latest frame received –", "monitor-freshness");
+    for (auto* diagnostic : {window_state_, coverage_, freshness_})
+        gtk_box_append(GTK_BOX(bridge), diagnostic);
     auto* popover = gtk_popover_new();
+    gtk_widget_add_css_class(popover, "profiler-info");
     gtk_popover_set_child(GTK_POPOVER(popover), bridge);
     auto* details = gtk_menu_button_new();
     gtk_menu_button_set_icon_name(GTK_MENU_BUTTON(details), "dialog-information-symbolic");
@@ -174,8 +180,18 @@ ProfilerView::ProfilerView(std::function<void(bool)> request_monitoring)
     auto* chart_panel = card();
     gtk_widget_add_css_class(chart_panel, "pacing-panel");
     auto* chart_header = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 16);
-    auto* chart_title = label("Frame pacing", "monitor-heading");
+    auto* chart_title = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
     gtk_widget_set_hexpand(chart_title, true);
+    gtk_widget_set_valign(chart_title, GTK_ALIGN_START);
+    gtk_box_append(GTK_BOX(chart_title), label("Frame pacing", "monitor-heading"));
+    auto* chart_context = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
+    chart_unit_ = label("FPS", "chart-unit");
+    gtk_box_append(GTK_BOX(chart_context), chart_unit_);
+    stall_state_ = label("", "chart-stale");
+    gtk_label_set_ellipsize(GTK_LABEL(stall_state_), PANGO_ELLIPSIZE_END);
+    gtk_widget_set_visible(stall_state_, false);
+    gtk_box_append(GTK_BOX(chart_context), stall_state_);
+    gtk_box_append(GTK_BOX(chart_title), chart_context);
     gtk_box_append(GTK_BOX(chart_header), chart_title);
     frame_identity_ = label("Frame –", "frame-value");
     frame_interval_ = label("Flip interval –", "frame-value");
@@ -198,6 +214,7 @@ ProfilerView::ProfilerView(std::function<void(bool)> request_monitoring)
     g_signal_connect(chart_fps_button_, "toggled", G_CALLBACK(+[](GtkToggleButton* button, gpointer data) {
         auto& self = *static_cast<ProfilerView*>(data);
         self.chart_fps_ = gtk_toggle_button_get_active(button);
+        gtk_label_set_text(GTK_LABEL(self.chart_unit_), self.chart_fps_ ? "FPS" : "ms");
         gtk_widget_queue_draw(self.chart_);
     }), this);
     gtk_box_append(GTK_BOX(chart_header), modes.root);
@@ -218,7 +235,7 @@ ProfilerView::ProfilerView(std::function<void(bool)> request_monitoring)
     chart_header_ = chart_header;
     gtk_widget_add_css_class(chart_header, "chart-header-overlay");
     chart_ = gtk_drawing_area_new();
-    gtk_drawing_area_set_content_height(GTK_DRAWING_AREA(chart_), 190);
+    gtk_drawing_area_set_content_height(GTK_DRAWING_AREA(chart_), 174);
     gtk_widget_set_hexpand(chart_, true);
     gtk_widget_set_tooltip_text(chart_, "FPS counts completed flips in the preceding source second. Click a sample to inspect. Missing samples are not interpolated.");
     gtk_drawing_area_set_draw_func(GTK_DRAWING_AREA(chart_), +[](GtkDrawingArea*, cairo_t* context, int width, int height, gpointer data) {
@@ -246,52 +263,52 @@ ProfilerView::ProfilerView(std::function<void(bool)> request_monitoring)
     gtk_widget_add_css_class(consumers, "consumers-panel");
     gtk_widget_set_size_request(consumers, 850, -1);
     gtk_widget_set_hexpand(consumers, true);
+    gtk_widget_set_valign(consumers, GTK_ALIGN_START);
     auto* consumer_header = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 16);
-    gtk_box_append(GTK_BOX(consumer_header), label("Top frame consumers", "monitor-heading"));
-    consumer_frame_ = label("Frame –", "consumer-frame");
+    auto* consumer_title = label("Top frame consumers", "monitor-heading");
+    gtk_widget_set_hexpand(consumer_title, true);
+    gtk_box_append(GTK_BOX(consumer_header), consumer_title);
+    const auto consumer_modes = ui::segmented_control("Frame", "Driver CPU", "GPU");
+    gtk_widget_set_sensitive(consumer_modes.second, false);
+    gtk_widget_set_sensitive(consumer_modes.third, false);
+    gtk_widget_set_tooltip_text(consumer_modes.root, "Per-frame CPU/GPU attribution is not available yet");
+    gtk_box_append(GTK_BOX(consumer_header), consumer_modes.root);
+    consumer_frame_ = label("Frame –", "frame-value");
+    gtk_label_set_ellipsize(GTK_LABEL(consumer_frame_), PANGO_ELLIPSIZE_END);
     gtk_box_append(GTK_BOX(consumer_header), consumer_frame_);
-    auto* cpu = gtk_toggle_button_new_with_label("Driver CPU");
-    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(cpu), true);
-    gtk_widget_set_sensitive(cpu, false);
-    auto* gpu = gtk_toggle_button_new_with_label("GPU");
-    gtk_widget_set_sensitive(gpu, false);
-    gtk_box_append(GTK_BOX(consumer_header), cpu);
-    gtk_box_append(GTK_BOX(consumer_header), gpu);
     auto* pending = label("Measurements pending", "consumer-pending");
-    gtk_widget_set_hexpand(pending, true);
+    gtk_label_set_ellipsize(GTK_LABEL(pending), PANGO_ELLIPSIZE_END);
     gtk_label_set_xalign(GTK_LABEL(pending), 1);
     gtk_widget_set_tooltip_text(pending, "Per-frame phase attribution is not supplied by this runtime. Placeholder rows do not represent measured rankings.");
     gtk_box_append(GTK_BOX(consumer_header), pending);
     gtk_box_append(GTK_BOX(consumers), consumer_header);
-    auto* table = gtk_grid_new();
-    gtk_grid_set_column_spacing(GTK_GRID(table), 18);
-    gtk_grid_set_row_spacing(GTK_GRID(table), 0);
+    auto* table = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
     const char* headings[] = {"Phase", "", "Elapsed", "Calls", "Share of flip"};
-    for (unsigned col = 0; col < 5; ++col) {
-        auto* heading = label(headings[col], "consumer-cell");
-        gtk_widget_add_css_class(heading, "consumer-column");
-        if (col > 1) gtk_label_set_xalign(GTK_LABEL(heading), 1);
-        gtk_grid_attach(GTK_GRID(table), heading, col, 0, 1, 1);
-    }
     const char* phases[] = {"Packet decode", "Texture upload", "Pipeline preparation", "Descriptor update", "Command recording",
         "Buffer synchronization", "Render-target setup", "Shader specialization", "Draw submission", "Present preparation"};
-    for (unsigned row = 0; row < 10; ++row) {
-        auto* phase = label(phases[row], "consumer-cell");
-        gtk_widget_set_size_request(phase, 205, -1);
-        gtk_grid_attach(GTK_GRID(table), phase, 0, row + 1, 1, 1);
-        auto* bar = gtk_progress_bar_new();
-        gtk_widget_add_css_class(bar, "consumer-bar");
-        gtk_widget_set_hexpand(bar, true);
-        gtk_widget_set_size_request(bar, 140, -1);
-        gtk_widget_set_valign(bar, GTK_ALIGN_CENTER);
-        gtk_grid_attach(GTK_GRID(table), bar, 1, row + 1, 1, 1);
-        for (unsigned col = 2; col < 5; ++col) {
-            auto* value = label("–", "consumer-cell");
-            gtk_widget_add_css_class(value, "numeric");
-            gtk_label_set_xalign(GTK_LABEL(value), 1);
-            gtk_widget_set_size_request(value, col == 2 ? 90 : col == 3 ? 75 : 110, -1);
-            gtk_grid_attach(GTK_GRID(table), value, col, row + 1, 1, 1);
+    const int widths[] = {205, 140, 90, 64, 100};
+    for (unsigned row = 0; row <= 10; ++row) {
+        auto* line = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 16);
+        gtk_widget_add_css_class(line, "consumer-row");
+        if (!row) gtk_widget_add_css_class(line, "consumer-column");
+        for (unsigned col = 0; col < 5; ++col) {
+            GtkWidget* cell;
+            if (row && col == 1) {
+                cell = gtk_progress_bar_new();
+                gtk_widget_add_css_class(cell, "consumer-bar");
+            } else {
+                cell = label(row ? (col == 0 ? phases[row - 1] : "–") : headings[col], "consumer-cell");
+                if (col > 1) {
+                    gtk_label_set_xalign(GTK_LABEL(cell), 1);
+                    gtk_widget_add_css_class(cell, "numeric");
+                }
+            }
+            gtk_widget_set_size_request(cell, widths[col], -1);
+            gtk_widget_set_hexpand(cell, col == 1);
+            gtk_widget_set_valign(cell, GTK_ALIGN_CENTER);
+            gtk_box_append(GTK_BOX(line), cell);
         }
+        gtk_box_append(GTK_BOX(table), line);
     }
     gtk_box_append(GTK_BOX(consumers), table);
     gtk_flow_box_insert(GTK_FLOW_BOX(lower), consumers, -1);
@@ -378,29 +395,6 @@ ProfilerView::ProfilerView(std::function<void(bool)> request_monitoring)
     gtk_box_append(GTK_BOX(side), memory_panel_);
     gtk_flow_box_insert(GTK_FLOW_BOX(lower), side, -1);
     gtk_box_append(GTK_BOX(live), lower);
-    auto* footer = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 16);
-    gtk_widget_add_css_class(footer, "profiler-footer");
-    gtk_box_append(GTK_BOX(footer), label("Main VideoOut", "resource-scope"));
-    window_state_ = label("Last 1 s", "resource-scope");
-    gtk_label_set_max_width_chars(GTK_LABEL(window_state_), 22);
-    gtk_label_set_ellipsize(GTK_LABEL(window_state_), PANGO_ELLIPSIZE_END);
-    gtk_box_append(GTK_BOX(footer), window_state_);
-    freshness_ = label("Latest frame received –", "monitor-freshness");
-    gtk_label_set_ellipsize(GTK_LABEL(freshness_), PANGO_ELLIPSIZE_END);
-    gtk_widget_set_hexpand(freshness_, true);
-    gtk_box_append(GTK_BOX(footer), freshness_);
-    stall_state_ = label("", "resource-scope");
-    gtk_widget_set_hexpand(stall_state_, true);
-    gtk_label_set_xalign(GTK_LABEL(stall_state_), 1);
-    gtk_label_set_ellipsize(GTK_LABEL(stall_state_), PANGO_ELLIPSIZE_END);
-    gtk_box_append(GTK_BOX(footer), stall_state_);
-    coverage_ = label("– / – samples · –", "monitor-coverage");
-    gtk_label_set_max_width_chars(GTK_LABEL(coverage_), 30);
-    gtk_label_set_ellipsize(GTK_LABEL(coverage_), PANGO_ELLIPSIZE_END);
-    gtk_label_set_xalign(GTK_LABEL(coverage_), 1);
-    gtk_box_append(GTK_BOX(footer), coverage_);
-    gtk_box_append(GTK_BOX(live), footer);
-
     auto* console = gtk_box_new(GTK_ORIENTATION_VERTICAL, 14);
     gtk_widget_set_vexpand(console, true);
     auto* actions = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 20);
@@ -612,7 +606,10 @@ void ProfilerView::monitoring(const MonitoringSnapshot& snapshot) {
     else gtk_widget_remove_css_class(freshness_, "stale");
     const auto stall = snapshot.stall_evidence == "instrumented_work_active" ? "Missing frames · instrumented work active" :
         snapshot.stall_evidence == "unknown" ? "Missing frames · cause unknown" : "";
-    gtk_label_set_text(GTK_LABEL(stall_state_), stall);
+    gtk_label_set_text(GTK_LABEL(stall_state_), *stall ? "Missing frames" : retained ? "Stale data" : "");
+    gtk_widget_set_visible(stall_state_, retained || *stall);
+    const auto stall_detail = freshness + (*stall ? std::string(" · ") + stall : "");
+    gtk_widget_set_tooltip_text(stall_state_, stall_detail.c_str());
     update_frame_detail();
     update_resources();
     gtk_widget_queue_draw(chart_);
@@ -809,12 +806,6 @@ void ProfilerView::draw_chart(cairo_t* context, int width, int height) noexcept 
             cairo_set_source_rgb(context, 0.56, 0.68, 0.76);
             chart_text(context, chart_left - 10, y + 4, number(value, 0), true);
         }
-        cairo_set_source_rgb(context, 0.83, 0.90, 0.95);
-        cairo_select_font_face(context, "Sans", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_BOLD);
-        cairo_set_font_size(context, 13);
-        chart_text(context, chart_left - 10, chart_top - 8, chart_fps_ ? "FPS" : "ms", true);
-        cairo_select_font_face(context, "Sans", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_NORMAL);
-        cairo_set_font_size(context, 12);
         for (unsigned tick = 0; tick <= 6; ++tick) {
             const double x = chart_left + plot_width * tick / 6.0;
             cairo_set_source_rgb(context, 0.12, 0.21, 0.28);
@@ -823,7 +814,7 @@ void ProfilerView::draw_chart(cairo_t* context, int width, int height) noexcept 
             cairo_stroke(context);
             cairo_set_source_rgb(context, 0.56, 0.68, 0.76);
             const auto text = tick == 6 ? "0 s" : "−" + std::to_string(60 - tick * 10) + " s";
-            chart_text(context, x - (tick == 6 ? 0 : 12), height - 16, text, tick == 6);
+            chart_text(context, x - (tick == 6 ? 0 : 12), height - 6, text, tick == 6);
         }
         if (monitoring_.samples.empty()) {
             cairo_set_source_rgb(context, 0.58, 0.69, 0.77);

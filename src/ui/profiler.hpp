@@ -68,6 +68,7 @@ private:
     GtkWidget* chart_ = nullptr;
     GtkWidget* chart_fps_button_ = nullptr;
     GtkWidget* chart_header_ = nullptr;
+    GtkWidget* chart_unit_ = nullptr;
     GtkGesture* chart_click_ = nullptr;
     GtkWidget* resource_panel_ = nullptr;
     GtkWidget* resource_state_ = nullptr;

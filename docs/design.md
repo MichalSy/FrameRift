@@ -19,7 +19,7 @@ The implementation covers the library/cache, automatic folder scanning, Linux la
 
 ## Shared application shell
 
-The application creates one header outside the page stack. Branding, navigation, connection status, game search, refresh, Settings and window controls retain the Library header layout and styling on every page. Switching tabs changes only the page content and active navigation marker. Pages do not rebuild, restyle, hide or reorder shell controls. Search and refresh open the Library; profiler session controls stay within the Profiler page.
+The application creates one header outside the page stack. Branding, navigation, connection status, Settings and window controls share the Library shell styling. The connection status sits directly beside Profiler; search and refresh appear only in the Library. Switching tabs changes the page content, active navigation marker and visibility of these Library actions. Pages do not rebuild or restyle the shell. Profiler content uses lighter navy surfaces, restrained rounding and consistent 8/16/24 px spacing; the Live workspace scrolls vertically rather than compressing shader and memory rows. Its scrollbar occupies a reserved lane at the right page edge, outside the padded cards.
 
 ## View 1: Library
 

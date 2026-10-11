@@ -51,14 +51,15 @@ button { box-shadow: none; text-shadow: none; }
 .window-buttons button.close:hover { background: #c73d50; }
 .bridge-indicator { color: #91a7b7; font-size: 12px; padding: 6px 12px; border-radius: 14px; background: #122c3a; }
 .bridge-indicator.connected { color: #8adbb3; }
-.profiler-page { padding: 8px 16px 12px; background: #0b151e; }
-.profiler-page button, .profiler-page dropdown > button { border-radius: 0; border: 1px solid #2a4658; background: #0e202d; padding: 3px 14px; min-height: 23px; box-shadow: none; font-size: 12px; }
+.profiler-page { background: #142735; }
+.profiler-live { padding: 0 24px 24px; }
+.profiler-page button, .profiler-page dropdown > button { border-radius: 6px; border: 1px solid #3b5a70; background: #203b4f; padding: 5px 14px; min-height: 25px; box-shadow: none; font-size: 12px; }
 .profiler-page button:checked { background: #133d55; border-color: #00b9d3; color: #effbff; }
 .profiler-page button:disabled { color: #8198aa; }
 .profiler-page checkbutton { font-size: 12px; }
-.profiler-page checkbutton check { border-radius: 0; min-width: 14px; min-height: 14px; border-color: #3c6177; }
+.profiler-page checkbutton check { border-radius: 3px; min-width: 14px; min-height: 14px; border-color: #3c6177; }
 .profiler-page checkbutton check:checked { background: #24d4eb; color: #07131c; }
-.profiler-session { padding: 2px 12px 8px; border-bottom: 1px solid #293e4c; }
+.profiler-session { padding: 16px 24px; border-bottom: 1px solid #345366; }
 .profiler-title { font-size: 20px; font-weight: 700; }
 .profiler-status { font-size: 11px; color: #9cb4c6; }
 .bridge-connection { font-size: 12px; color: #91a7b7; }
@@ -69,8 +70,8 @@ button { box-shadow: none; text-shadow: none; }
 .monitoring-state.pending, .work-active { color: #ffc75b; }
 .monitor-control-label { font-size: 12px; color: #adc5d6; }
 .profiler-tabs button { min-width: 45px; padding: 3px 14px; }
-.metric-strip { border: 1px solid #294656; background: #0d1a24; }
-.metric-card { padding: 12px 18px; border-right: 1px solid #294656; }
+.metric-strip { border: 1px solid #3a596d; border-radius: 8px; background: #1b3243; }
+.metric-card { padding: 16px 20px; border-right: 1px solid #3a596d; }
 .metric-card:last-child { border-right: none; }
 .metric-label { color: #d4e2ec; font-size: 13px; }
 .metric-value { color: #edf6fc; font-size: 36px; font-weight: 600; font-feature-settings: "tnum"; }
@@ -78,29 +79,29 @@ button { box-shadow: none; text-shadow: none; }
 .monitor-window { color: #b6cad8; font-size: 13px; }
 .monitor-freshness, .monitor-coverage { color: #9ab2c4; font-size: 11px; }
 .metric-value.stale, .monitor-freshness.stale { color: #b8a47c; }
-.monitor-panel { padding: 10px 16px; border: 1px solid #294656; background: #0d1a24; }
+.monitor-panel { padding: 20px; border: 1px solid #3a596d; border-radius: 8px; background: #1b3243; }
 .monitor-heading { font-size: 17px; font-weight: 600; color: #edf4fa; }
-.frame-inspection { padding: 2px 10px; border: 1px solid #294656; }
+.frame-inspection { padding: 8px 12px; border: 1px solid #3a596d; border-radius: 6px; background: #182d3c; }
 .frame-value { font-size: 12px; color: #e1edf6; font-feature-settings: "tnum"; }
 .frame-inspection separator { background: #294656; }
 .resource-row > flowboxchild { padding: 0; border: none; background: transparent; }
-.consumer-frame { color: #24d4eb; font-size: 12px; padding: 5px 8px; border: 1px solid #009fb9; }
+.consumer-frame { color: #24d4eb; font-size: 12px; padding: 5px 8px; border: 1px solid #009fb9; border-radius: 6px; }
 .consumer-pending { font-size: 11px; color: #ffc75b; }
-.consumer-cell { font-size: 13px; padding: 7px 0; border-bottom: 1px solid #253c4c; }
+.consumer-cell { font-size: 13px; padding: 8px 0; border-bottom: 1px solid #345366; }
 .consumer-column { color: #a8c0d2; }
 .numeric, .resource-value { font-feature-settings: "tnum"; }
-.consumer-bar trough { min-height: 14px; border: none; border-radius: 0; background: #1a303e; }
-.consumer-bar progress { min-width: 0; margin: 0; padding: 0; min-height: 14px; border: none; border-radius: 0; background: #24d4eb; }
-.work-cell { font-size: 13px; padding: 4px 0; border-bottom: 1px solid #253c4c; }
-.resource-label { font-size: 12px; color: #d4e2ec; }
-.resource-value { font-size: 12px; color: #edf4fa; }
-.resource-state, .resource-scope { font-size: 11px; color: #9bb4c6; }
+.consumer-bar trough { min-height: 14px; border: none; border-radius: 4px; background: #2c4a5e; }
+.consumer-bar progress { min-width: 0; margin: 0; padding: 0; min-height: 14px; border: none; border-radius: 4px; background: #24d4eb; }
+.work-cell { font-size: 13px; padding: 8px 0; border-bottom: 1px solid #345366; }
+.resource-label { font-size: 13px; color: #d4e2ec; }
+.resource-value { font-size: 13px; color: #edf4fa; }
+.resource-state, .resource-scope { font-size: 12px; color: #9bb4c6; }
 .resource-panel.stale .resource-value, .resource-panel.stale .numeric { color: #b8a47c; }
-.resource-gauge trough { min-height: 8px; border: none; border-radius: 0; background: #1a303e; }
-.resource-gauge progress { min-width: 0; margin: 0; padding: 0; min-height: 8px; border: none; border-radius: 0; background: #24d4eb; }
+.resource-gauge trough { min-height: 8px; border: none; border-radius: 4px; background: #2c4a5e; }
+.resource-gauge progress { min-width: 0; margin: 0; padding: 0; min-height: 8px; border: none; border-radius: 4px; background: #24d4eb; }
 .resource-gauge.over-budget progress { background: #e4ac5a; }
 .resource-panel.stale .resource-gauge { opacity: .5; }
-.profiler-footer { border-top: 1px solid #294656; padding: 8px 12px 0; }
-.console-frame { border: 1px solid #2c4455; background: #08121a; }
-.profiler-console { padding: 14px 16px; }
+.profiler-footer { border-top: 1px solid #345366; padding: 16px 0 0; }
+.console-frame { border: 1px solid #3a596d; border-radius: 8px; background: #122431; }
+.profiler-console { padding: 0 24px 24px; }
 .console-empty { color: #8fa8ba; font-size: 15px; }

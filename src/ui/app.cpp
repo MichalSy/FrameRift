@@ -210,13 +210,13 @@ private:
         profiler_tab_ = navigation_tab("Profiler", "profiler");
         gtk_box_append(GTK_BOX(row), library_tab_);
         gtk_box_append(GTK_BOX(row), profiler_tab_);
-        auto* spacer = box(GTK_ORIENTATION_HORIZONTAL);
-        gtk_widget_set_hexpand(spacer, true);
-        gtk_box_append(GTK_BOX(row), spacer);
         bridge_indicator_ = label("Game not connected", "bridge-indicator");
         g_object_add_weak_pointer(G_OBJECT(bridge_indicator_), reinterpret_cast<gpointer*>(&bridge_indicator_));
         gtk_widget_set_valign(bridge_indicator_, GTK_ALIGN_CENTER);
         gtk_box_append(GTK_BOX(row), bridge_indicator_);
+        auto* spacer = box(GTK_ORIENTATION_HORIZONTAL);
+        gtk_widget_set_hexpand(spacer, true);
+        gtk_box_append(GTK_BOX(row), spacer);
         search_ = gtk_search_entry_new();
         gtk_widget_add_css_class(search_, "game-search");
         gtk_editable_set_width_chars(GTK_EDITABLE(search_), 16);
@@ -323,6 +323,8 @@ private:
     void show_page(const char* page) {
         gtk_stack_set_visible_child_name(GTK_STACK(pages_), page);
         const bool library = g_str_equal(page, "library");
+        gtk_widget_set_visible(search_, library);
+        gtk_widget_set_visible(refresh_, library);
         for (auto* tab : {library_tab_, profiler_tab_}) {
             if ((tab == library_tab_) == library) gtk_widget_add_css_class(tab, "active");
             else gtk_widget_remove_css_class(tab, "active");

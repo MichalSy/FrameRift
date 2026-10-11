@@ -49,7 +49,7 @@ std::string bytes(long double value) {
 }
 
 GtkWidget* panel() {
-    auto* widget = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
+    auto* widget = gtk_box_new(GTK_ORIENTATION_VERTICAL, 16);
     gtk_widget_add_css_class(widget, "monitor-panel");
     return widget;
 }
@@ -94,14 +94,14 @@ double chart_maximum(const MonitoringSnapshot& snapshot, bool fps) {
 
 ProfilerView::ProfilerView(std::function<void(bool)> request_monitoring)
     : request_monitoring_(std::move(request_monitoring)) {
-    root_ = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
+    root_ = gtk_box_new(GTK_ORIENTATION_VERTICAL, 16);
     g_object_ref_sink(root_);
     gtk_widget_add_css_class(root_, "profiler-page");
     auto* workspace = gtk_stack_new();
     gtk_stack_set_hhomogeneous(GTK_STACK(workspace), false);
     gtk_stack_set_vhomogeneous(GTK_STACK(workspace), false);
     gtk_widget_set_vexpand(workspace, true);
-    auto* header = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 18);
+    auto* header = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 16);
     gtk_widget_add_css_class(header, "profiler-session");
     title_ = label("Profiler", "profiler-title");
     gtk_label_set_ellipsize(GTK_LABEL(title_), PANGO_ELLIPSIZE_END);
@@ -156,7 +156,9 @@ ProfilerView::ProfilerView(std::function<void(bool)> request_monitoring)
 
     auto* live_scroll = gtk_scrolled_window_new();
     gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(live_scroll), GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
-    auto* live = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
+    gtk_scrolled_window_set_overlay_scrolling(GTK_SCROLLED_WINDOW(live_scroll), false);
+    auto* live = gtk_box_new(GTK_ORIENTATION_VERTICAL, 16);
+    gtk_widget_add_css_class(live, "profiler-live");
     gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(live_scroll), live);
     gtk_stack_add_titled(GTK_STACK(workspace), live_scroll, "live", "Live");
     auto* cards = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
@@ -230,7 +232,7 @@ ProfilerView::ProfilerView(std::function<void(bool)> request_monitoring)
     gtk_box_append(GTK_BOX(chart_header), follow_live_);
     gtk_box_append(GTK_BOX(chart_panel), chart_header);
     chart_ = gtk_drawing_area_new();
-    gtk_drawing_area_set_content_height(GTK_DRAWING_AREA(chart_), 140);
+    gtk_drawing_area_set_content_height(GTK_DRAWING_AREA(chart_), 200);
     gtk_widget_set_hexpand(chart_, true);
     gtk_widget_set_tooltip_text(chart_, "FPS counts completed flips in the preceding source second. Click a sample to inspect. Missing samples are not interpolated.");
     gtk_drawing_area_set_draw_func(GTK_DRAWING_AREA(chart_), +[](GtkDrawingArea*, cairo_t* context, int width, int height, gpointer data) {
@@ -273,10 +275,9 @@ ProfilerView::ProfilerView(std::function<void(bool)> request_monitoring)
     gtk_flow_box_set_selection_mode(GTK_FLOW_BOX(lower), GTK_SELECTION_NONE);
     gtk_flow_box_set_min_children_per_line(GTK_FLOW_BOX(lower), 1);
     gtk_flow_box_set_max_children_per_line(GTK_FLOW_BOX(lower), 2);
-    gtk_flow_box_set_column_spacing(GTK_FLOW_BOX(lower), 12);
-    gtk_flow_box_set_row_spacing(GTK_FLOW_BOX(lower), 12);
+    gtk_flow_box_set_column_spacing(GTK_FLOW_BOX(lower), 16);
+    gtk_flow_box_set_row_spacing(GTK_FLOW_BOX(lower), 16);
     gtk_widget_add_css_class(lower, "resource-row");
-    gtk_widget_set_vexpand(lower, true);
     auto* consumers = panel();
     gtk_widget_add_css_class(consumers, "consumers-panel");
     gtk_widget_set_size_request(consumers, 850, -1);
@@ -331,7 +332,7 @@ ProfilerView::ProfilerView(std::function<void(bool)> request_monitoring)
     gtk_box_append(GTK_BOX(consumers), table);
     gtk_flow_box_insert(GTK_FLOW_BOX(lower), consumers, -1);
 
-    auto* side = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
+    auto* side = gtk_box_new(GTK_ORIENTATION_VERTICAL, 16);
     gtk_widget_set_size_request(side, 430, -1);
     gtk_widget_set_hexpand(side, true);
     resource_panel_ = panel();
@@ -370,7 +371,8 @@ ProfilerView::ProfilerView(std::function<void(bool)> request_monitoring)
     queues_ = label("Preparation – queued · Optimization – queued", "resource-scope");
     gtk_box_append(GTK_BOX(resource_panel_), queues_);
     auto* cache = gtk_grid_new();
-    gtk_grid_set_column_spacing(GTK_GRID(cache), 12);
+    gtk_grid_set_column_spacing(GTK_GRID(cache), 16);
+    gtk_grid_set_row_spacing(GTK_GRID(cache), 16);
     const char* cache_labels[] = {"Cached variants", "CPU payload", "Disk cache"};
     for (unsigned i = 0; i < 3; ++i) {
         auto* heading = label(cache_labels[i], "resource-label");
@@ -385,28 +387,28 @@ ProfilerView::ProfilerView(std::function<void(bool)> request_monitoring)
     gtk_box_append(GTK_BOX(side), resource_panel_);
     memory_panel_ = panel();
     gtk_widget_add_css_class(memory_panel_, "resource-panel");
-    gtk_widget_set_vexpand(memory_panel_, true);
     gtk_box_append(GTK_BOX(memory_panel_), label("Memory", "monitor-heading"));
-    auto* memory_grid = gtk_grid_new();
-    gtk_grid_set_column_spacing(GTK_GRID(memory_grid), 14);
-    gtk_grid_set_row_spacing(GTK_GRID(memory_grid), 6);
+    auto* memory_rows = gtk_box_new(GTK_ORIENTATION_VERTICAL, 16);
     const char* memory_labels[] = {"Process RSS", "Sampled cache", "Storage cache", "GPU heap estimate"};
     for (unsigned i = 0; i < 4; ++i) {
+        auto* row = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
+        auto* values = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 16);
         auto* heading = label(memory_labels[i], "resource-label");
-        gtk_grid_attach(GTK_GRID(memory_grid), heading, 0, i, 1, 1);
+        gtk_widget_set_hexpand(heading, true);
+        gtk_box_append(GTK_BOX(values), heading);
         memory_values_[i] = label("–", "resource-value");
         gtk_label_set_xalign(GTK_LABEL(memory_values_[i]), 1);
-        gtk_grid_attach(GTK_GRID(memory_grid), memory_values_[i], 2, i, 1, 1);
+        gtk_box_append(GTK_BOX(values), memory_values_[i]);
+        gtk_box_append(GTK_BOX(row), values);
         if (i) {
             memory_gauges_[i - 1] = gtk_progress_bar_new();
             gtk_widget_add_css_class(memory_gauges_[i - 1], "resource-gauge");
             gtk_widget_set_hexpand(memory_gauges_[i - 1], true);
-            gtk_widget_set_size_request(memory_gauges_[i - 1], 40, -1);
-            gtk_widget_set_valign(memory_gauges_[i - 1], GTK_ALIGN_CENTER);
-            gtk_grid_attach(GTK_GRID(memory_grid), memory_gauges_[i - 1], 1, i, 1, 1);
+            gtk_box_append(GTK_BOX(row), memory_gauges_[i - 1]);
         }
+        gtk_box_append(GTK_BOX(memory_rows), row);
     }
-    gtk_box_append(GTK_BOX(memory_panel_), memory_grid);
+    gtk_box_append(GTK_BOX(memory_panel_), memory_rows);
     memory_scope_ = label("GPU source – · received –", "resource-scope");
     gtk_box_append(GTK_BOX(memory_panel_), memory_scope_);
     gtk_box_append(GTK_BOX(side), memory_panel_);

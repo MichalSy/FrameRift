@@ -80,7 +80,6 @@ button { box-shadow: none; text-shadow: none; }
 .metric-label { color: #d4e2ec; font-size: 13px; }
 .metric-value { color: #edf6fc; font-size: 28px; font-weight: 600; font-feature-settings: "tnum"; }
 .metric-primary { color: #24d4eb; }
-.monitor-window { color: #b6cad8; font-size: 13px; }
 .monitor-freshness, .monitor-coverage { color: #9ab2c4; font-size: 11px; }
 .metric-value.stale, .monitor-freshness.stale { color: #b8a47c; }
 .monitor-heading { font-size: 17px; font-weight: 600; color: #edf4fa; }

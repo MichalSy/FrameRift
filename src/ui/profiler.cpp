@@ -169,19 +169,6 @@ ProfilerView::ProfilerView(std::function<void(bool)> request_monitoring)
         gtk_box_append(GTK_BOX(metric_values), card.root);
     }
     gtk_box_append(GTK_BOX(cards), metric_values);
-    auto* summary = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
-    gtk_widget_add_css_class(summary, "metric-card");
-    window_state_ = label("Last 1 s", "monitor-window");
-    gtk_label_set_width_chars(GTK_LABEL(window_state_), 20);
-    gtk_label_set_max_width_chars(GTK_LABEL(window_state_), 20);
-    gtk_label_set_ellipsize(GTK_LABEL(window_state_), PANGO_ELLIPSIZE_END);
-    coverage_ = label("– / – samples · –", "monitor-coverage");
-    gtk_label_set_width_chars(GTK_LABEL(coverage_), 20);
-    gtk_label_set_max_width_chars(GTK_LABEL(coverage_), 20);
-    gtk_label_set_ellipsize(GTK_LABEL(coverage_), PANGO_ELLIPSIZE_END);
-    gtk_box_append(GTK_BOX(summary), window_state_);
-    gtk_box_append(GTK_BOX(summary), coverage_);
-    gtk_box_append(GTK_BOX(cards), summary);
     gtk_box_append(GTK_BOX(live), cards);
 
     auto* chart_panel = card();
@@ -391,15 +378,27 @@ ProfilerView::ProfilerView(std::function<void(bool)> request_monitoring)
     gtk_box_append(GTK_BOX(side), memory_panel_);
     gtk_flow_box_insert(GTK_FLOW_BOX(lower), side, -1);
     gtk_box_append(GTK_BOX(live), lower);
-    auto* footer = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 24);
+    auto* footer = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 16);
     gtk_widget_add_css_class(footer, "profiler-footer");
     gtk_box_append(GTK_BOX(footer), label("Main VideoOut", "resource-scope"));
+    window_state_ = label("Last 1 s", "resource-scope");
+    gtk_label_set_max_width_chars(GTK_LABEL(window_state_), 22);
+    gtk_label_set_ellipsize(GTK_LABEL(window_state_), PANGO_ELLIPSIZE_END);
+    gtk_box_append(GTK_BOX(footer), window_state_);
     freshness_ = label("Latest frame received –", "monitor-freshness");
+    gtk_label_set_ellipsize(GTK_LABEL(freshness_), PANGO_ELLIPSIZE_END);
+    gtk_widget_set_hexpand(freshness_, true);
     gtk_box_append(GTK_BOX(footer), freshness_);
     stall_state_ = label("", "resource-scope");
     gtk_widget_set_hexpand(stall_state_, true);
     gtk_label_set_xalign(GTK_LABEL(stall_state_), 1);
+    gtk_label_set_ellipsize(GTK_LABEL(stall_state_), PANGO_ELLIPSIZE_END);
     gtk_box_append(GTK_BOX(footer), stall_state_);
+    coverage_ = label("– / – samples · –", "monitor-coverage");
+    gtk_label_set_max_width_chars(GTK_LABEL(coverage_), 30);
+    gtk_label_set_ellipsize(GTK_LABEL(coverage_), PANGO_ELLIPSIZE_END);
+    gtk_label_set_xalign(GTK_LABEL(coverage_), 1);
+    gtk_box_append(GTK_BOX(footer), coverage_);
     gtk_box_append(GTK_BOX(live), footer);
 
     auto* console = gtk_box_new(GTK_ORIENTATION_VERTICAL, 14);
@@ -793,18 +792,25 @@ void ProfilerView::draw_chart(cairo_t* context, int width, int height) noexcept 
         const double maximum = chart_maximum(monitoring_, chart_fps_);
         cairo_select_font_face(context, "Sans", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_NORMAL);
         cairo_set_font_size(context, 12);
-        const unsigned ticks = chart_fps_ ? 5 : 4;
-        for (unsigned tick = 0; tick <= ticks; ++tick) {
-            const double y = chart_top + plot_height * tick / ticks;
+        const double fps_ticks[] = {13, 30, 60};
+        const unsigned count = chart_fps_ ? 3 : 5;
+        for (unsigned tick = 0; tick < count; ++tick) {
+            const double value = chart_fps_ ? fps_ticks[tick] : maximum * (1.0 - tick / 4.0);
+            const double y = chart_top + plot_height * (1.0 - value / maximum);
             cairo_set_source_rgb(context, 0.14, 0.24, 0.30);
             cairo_set_line_width(context, 1);
             cairo_move_to(context, chart_left, y);
             cairo_line_to(context, width - chart_right, y);
             cairo_stroke(context);
             cairo_set_source_rgb(context, 0.56, 0.68, 0.76);
-            chart_text(context, chart_left - 10, y + 4, number(maximum * (1 - static_cast<double>(tick) / ticks), 0), true);
+            chart_text(context, chart_left - 10, y + 4, number(value, 0), true);
         }
-        chart_text(context, 10, chart_top - 8, chart_fps_ ? "FPS" : "ms");
+        cairo_set_source_rgb(context, 0.83, 0.90, 0.95);
+        cairo_select_font_face(context, "Sans", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_BOLD);
+        cairo_set_font_size(context, 13);
+        chart_text(context, chart_left - 10, chart_top - 8, chart_fps_ ? "FPS" : "ms", true);
+        cairo_select_font_face(context, "Sans", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_NORMAL);
+        cairo_set_font_size(context, 12);
         for (unsigned tick = 0; tick <= 6; ++tick) {
             const double x = chart_left + plot_width * tick / 6.0;
             cairo_set_source_rgb(context, 0.12, 0.21, 0.28);

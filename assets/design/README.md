@@ -7,17 +7,12 @@ Additional attribution terms: see NOTICE in the repository root.
 
 # Design images and sources
 
-These images document FrameRift's visual direction. They were created with the built-in ImageGen tool as UI concepts. They are not screenshots of a working application. The current profiler workspace and input script editor are specified in [Profiler workspace and game input scripts](../../docs/profiler-workspace.md), with their [generation/edit prompts](profiler-prompts.md).
-
-| File | View | Size |
-| --- | --- | --- |
-| [library.png](library.png) | Library, hero, recently played, game covers | 1672 × 941 pixels |
-| [profiler.png](profiler.png) | Running game, frame analysis, frame times | 1672 × 941 pixels |
-| [profiler-live-v6.png](profiler-live-v6.png) | Current native target: FPS/flip chart, ten consumers, shader and memory panels | 1578 × 997 pixels |
-| [profiler-live-v2.png](profiler-live-v2.png) | FPS overview, live frame detail, scoped top consumers, script/capture pane | 1605 × 980 pixels |
-| [profiler-input-scripts.png](profiler-input-scripts.png) | Per-game scripts, optional start frame, relative actions and capture checkpoints | 1604 × 980 pixels |
-
-The profiler values are illustrative examples. The new workspace concepts contain empty screenshot placeholders and no generated game artwork. The native Live dashboard now implements the v6 composition with frame pacing, shader work and scoped memory; [native screenshots and visual review](../../docs/profiler-design-review.md) record its verification. The FPS history counts completed flips over one source second, while the overview estimate uses mean valid flip intervals. Per-frame consumer attribution, captures, saved scripts and script MCP tools remain unimplemented. Input scripts are planned to run immediately by default, with optional absolute/delayed starts. Other fictional games and covers in the earlier concepts serve the design. ASTRO BOT in the library is an artwork example, not a claim that it runs with AnyPS5.
+- ImageGen concepts show the visual direction; they are not application screenshots or gameplay evidence.
+- Library concept: `library.png`; current Profiler target: `profiler-live-v6.png`; earlier variants remain reference assets.
+- Input-script concept: `profiler-input-scripts.png`; capture/script UI and detailed frame attribution remain planned.
+- Concepts use illustrative values. The application uses real API game artwork, not generated replacements.
+- [Native profiler screenshots](../../docs/profiler-design-review.md), [current measurements](../../docs/profiling.md), [remaining workspace plan](../../docs/profiler-workspace.md).
+- [Generation/edit prompts](profiler-prompts.md). ASTRO BOT is an artwork example, not a compatibility claim.
 
 ## Artwork references
 

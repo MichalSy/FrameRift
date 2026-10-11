@@ -7,7 +7,7 @@ Additional attribution terms: see NOTICE in the repository root.
 
 # Contributing to FrameRift
 
-FrameRift implements a native GTK4 library with automatic folder scanning, metadata import, a SQLite/artwork cache, animated heroes, Settings with keyring credentials, Linux launch/rebuild and a Profiler console with complete session logs. See the [README](README.md) for setup and the [roadmap](docs/roadmap.md) for planned extensions. Window embedding, timing analysis and controller navigation remain planned; Windows and gameplay compatibility remain unverified.
+FrameRift implements a native GTK4 library with automatic folder scanning, metadata import, a SQLite/artwork cache, animated heroes, Settings with keyring credentials, Linux launch/rebuild and Profiler Live/Logs with complete session logs, UDP telemetry and HTTP MCP game control. See the [README](README.md) for setup and the [roadmap](docs/roadmap.md) for planned extensions. Window embedding, detailed per-frame CPU/GPU attribution, captures, input scripts and controller navigation remain planned; Windows and gameplay compatibility remain unverified.
 
 Read [AGENTS.md](AGENTS.md) before implementing changes. Keep changes small, write code, comments and UI text in English, and use the existing domains: database access in `src/library`, GTK presentation in `src/ui`, and conversion and process launching in `src/runtime`. Add files and abstractions only when the current need justifies them.
 

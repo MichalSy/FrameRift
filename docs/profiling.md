@@ -5,135 +5,62 @@ Original project: https://github.com/MichalSy/FrameRift
 Additional attribution terms: see NOTICE in the repository root.
 -->
 
-# Profiling and frame analysis
+# Profiler: Live and Logs
 
-The Profiler has **Live** and **Logs** views for an externally launched game. The Logs view's output-only VTE terminal receives merged stdout/stderr directly, interprets terminal colors and progress updates, and retains 5000 scrollback lines. The runtime also writes the complete raw session log at `<framerift-data-root>/logs/<game-id>/<session-id>/game.log`; display-only LF-to-CRLF normalization leaves that file unchanged. There is no shell, PTY or file polling. Disable Follow output and scroll up to inspect earlier output; the Copy button, Ctrl+C or Ctrl+Shift+C copies selected text. Logs remain visible after process exit and the terminal clears for the next session.
+## Connect and use
 
-The Live view uses the [UDP debug bridge and MCP server](debug-bridge.md). Managed game starts automatically request **Monitoring** after the bridge handshake, including starts through MCP. The toggle can disable it for that session. Monitoring receives successful main-output flip summaries from a bridge-enabled AnyPS5 build. The dashboard updates once per second with estimated FPS, mean/P95/worst flip interval, sample coverage, latest/worst frame details and a bounded 60-second history. Live/Logs and chart mode use the same segmented control. The compact chart has a fixed FPS axis from 0 to 75; higher observations remain in the measurements but are clipped in the plot. Flip interval keeps its automatic scale. The FPS axis labels only 13, 30 and 60. A native FPS/ms label sits beneath the chart title; the time axis uses compact bottom spacing. Sample counts, coverage, observation-window state and receive age live in the Info popup. The dashboard has no footer; stale or missing frames remain visible beside the chart unit. The chart defaults to **FPS**; a segmented control always shows both **FPS** and **Flip interval**, with the active mode highlighted. Frame identity, interval and latest/worst selection sit in the chart header overlay; output identity is available in the frame tooltip. FPS history counts completed flips in the preceding source second, requiring a reliable full-second baseline; it does not invert each individual interval. Brief catch-up flips therefore do not create artificial 400-FPS spikes. Missing samples and pauses of at least one second break the line, and the live time axis advances while frames stop arriving. The overview FPS estimate remains the reciprocal of the mean valid interval in its displayed source window. Selecting a chart point preserves that frame until Follow live is resumed. Collection continues across tab changes; stop/disconnect retains the last observation with an explicit inactive/stale state.
+1. Select the modified AnyPS5 checkout in Settings; build its `relinker` and patched `libs` with `ANYPS5_ENABLE_DEBUG_BRIDGE=ON`.
+2. Start a scanned game with Play or MCP `start_game`.
+3. The game receives FrameRift's UDP address/session. Its `hello` establishes the connection; FrameRift then requests monitoring automatically.
+4. In **Live**, use **Monitoring** to switch collection, **FPS / Flip interval** for the chart and a chart point to inspect a frame. **Follow live** resumes selection updates.
+5. Use **Logs** for process output. Switching pages leaves the game, receiver and log capture running.
 
-The same normalized model is available through `get_monitoring_snapshot`. Game-side monotonic timestamps determine intervals and source windows; UDP receive age determines freshness. The first completion after activation or output reset has no interval. Per-stream completion IDs identify missing samples separately from general packet gaps and producer drops. The dashboard does not acknowledge telemetry, parse timing files or enable existing timing/draw/GPU log settings. CPU hotspots, GPU execution tables, saved snapshots and screenshots remain later increments.
+- Header status reports the UDP handshake. Process `running` alone does not mean connected, rendering or playable.
+- The runtime starts monitoring off; receipt of the request differs from confirmed activation. Manual OFF remains for that session; a new managed launch requests ON again.
+- Collection is independent of timing-file/draw/GPU logging. Connection-only/older adapters expose only their supported measurements.
+- Addresses, command status, protocol and failure diagnosis: [MCP/UDP](debug-bridge.md).
 
-The workspace follows [profiler-live-v6](../assets/design/profiler-live-v6.png): a metric strip, full-width frame-pacing chart, frame-consumer card and separate **Shader activity** and **Memory** panels. The Profiler shares the Library background, with darker navy cards, 4 px corners and consistent spacing. The compact overview places each label beside its right-aligned value, with smaller FPS/ms units. Visible millisecond values are rounded to integers; tooltips retain the precise values. Live content scrolls vertically; resource rows keep their natural height, and memory budgets use full-width bars beneath each label/value pair. Numbers use tabular digits and align to the right. The consumer header centers the plain frame number independently of the title and right-aligned shared Frame / Driver CPU / GPU control. Unavailable modes are disabled. Detailed frame attribution is not supplied yet: the body shows “No data” with a 340 px minimum height, without placeholder rankings or a pending label. Capture and input-script UI remain deferred.
+## What Live measures
 
-Shader activity shows translation, specialization, pipeline build and shader-module creation. **Active** is the current gauge; **Done** is cumulative completed attempts since process start and resets with a new game process. **Elapsed / window** shows completed/failed attempt wall time in the indicated observed resource window. Nested timings overlap and do not measure GPU execution or additive CPU utilization. Queues, cached variants, retained CPU payload and disk-cache counters appear beneath the table. Tooltips expose scopes, failures, lifetime timing and other instrumented work without permanent explanatory text.
-
-Memory shows process RSS, sampled/storage cache usage and budgets, and a driver-estimated GPU heap. Unavailable values show `–`, observed zero shows `0 B`, and stale observations keep their age visible. Resources are independent of the selected frame. Changes are coalesced with a five-second refresh and ten-second freshness limit; Linux RSS is sampled once per second. Texture accounting and the existing Vulkan budget query publish at their own update sites. See the [resource field contract](debug-bridge.md#shader-and-memory-resources).
-
-Presentation/acquisition/idle/graphics waits, queue submission and preparation/optimization activity remain available in MCP `resources.activity` and `resources.activity_window`, and in the Shader activity tooltip. Missing fresh frames are labeled with instrumented active work or **cause unknown**; zero shader work is not proof that the game is idle. Older adapters retain supported gauges and show unavailable extra timings.
-
-Confirmed AnyPS5 details refer to [upstream `197ffac97203d715a258a28b432fa2eedbf8be6f`](https://github.com/boykopovar/AnyPS5/tree/197ffac97203d715a258a28b432fa2eedbf8be6f). This source snapshot is not a FrameRift runtime benchmark. See [AnyPS5 integration](anyps5-integration.md), [Controller and input](controller-input.md) and the [project overview](../README.md).
-
-## Confirmed measurement sources
-
-AnyPS5 already contains instrumentation. FrameRift must distinguish displaying existing data from introducing a new measurement interface.
-
-| Source | Activation in the examined AnyPS5 version | Existing output | Potential use in FrameRift |
-| --- | --- | --- | --- |
-| Frame timing | Build option `APS5_ENABLE_TIMING_LOG=ON`, disabled by default | `frame-timing.log` | Basis for an initial file import and timing charts |
-| Draw/driver profiling | Presence of environment variable `APS5_PROFILE_DRAW` | Diagnostics and counters, mainly through the profiling output path to `stderr` | Basis for a log view and selected statistics |
-| GPU timing | Presence of environment variable `APS5_PROFILE_GPU` | Vulkan timestamp results and `[gputime]` aggregates | Basis for GPU program and command-class hotspots |
-| General diagnostics | Runtime path and settings | stdout/stderr, errors and exit status | Troubleshooting and placing events within a session |
-
-Both profiling variables are checked for **presence** in the examined paths. A variable set to `0` remains present. FrameRift should remove the variable when disabling profiling rather than setting it to the string `0`. Sources: [Build option](https://github.com/boykopovar/AnyPS5/blob/197ffac97203d715a258a28b432fa2eedbf8be6f/CMakeLists.txt#L26), [Draw activation](https://github.com/boykopovar/AnyPS5/blob/197ffac97203d715a258a28b432fa2eedbf8be6f/core/libs/prx/libSceAgcDriver/Graphics/src/Recorder.cpp#L38), [GPU activation](https://github.com/boykopovar/AnyPS5/blob/197ffac97203d715a258a28b432fa2eedbf8be6f/core/libs/prx/libSceAgcDriver/Graphics/src/Recorder.cpp#L1790).
-
-The code's presence does not prove that every distributed runtime library set includes frame timing. The Live UI checks the session's monitoring capability and marks missing measurements as unavailable.
-
-## Existing frame-timing format
-
-`PerformanceTimer.hpp` captures fields including:
-
-- Frame ID, associated submission range, flip submission and packet offset.
-- Video-output handle, buffer index and flip argument.
-- Timestamps for first submission, first execution, flip packet and flip completion.
-- Durations between those timestamps and the interval between flip completions.
-- Worker time, attributed and unattributed worker time.
-- GPU busy/gap values, batch counters, packet count and a slow-packet entry.
-- Phase metrics as count, total duration, maximum duration and, where applicable, bytes.
-
-The header explicitly describes metrics as inclusive. Background metrics also summarize work completed since the preceding flip. Source: [Capture and metric format](https://github.com/boykopovar/AnyPS5/blob/197ffac97203d715a258a28b432fa2eedbf8be6f/core/libs/prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp#L154).
-
-The present loop determines the interval between consecutive flip completions and passes the record to the timing logger. If enabled, the runtime writes `frame-timing.log` relative to its game working directory, currently `<framerift-data-root>/saves/<game-id>/`; FrameRift does not yet import this file. The logger writes asynchronously to a buffered file and flushes periodically. File monitoring can therefore lag behind the current game state. Sources: [Present loop](https://github.com/boykopovar/AnyPS5/blob/197ffac97203d715a258a28b432fa2eedbf8be6f/core/libs/prx/libSceVideoOut/src/VideoOutDriver.cpp#L587), [Timing logger](https://github.com/boykopovar/AnyPS5/blob/197ffac97203d715a258a28b432fa2eedbf8be6f/core/libs/prx/libSceVideoOut/include/FrameTimingLog.hpp#L18).
-
-## Naming FPS and frame time accurately
-
-The record contains `endpoint=flip_complete` and `display_confirmed=0`. This is an explicit limit: the measurement does not confirm when the image appeared on the monitor. FrameRift should initially display **flip interval** and **estimated flip rate**, with the measurement point explained in a tooltip or details. Source: [Endpoint labeling](https://github.com/boykopovar/AnyPS5/blob/197ffac97203d715a258a28b432fa2eedbf8be6f/core/libs/prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp#L159).
-
-For a valid positive interval, a simple derived rate is `1000 / flip_interval_ms`. The dashboard overview divides the number of received valid intervals by their total duration over the last source second. P95 uses the nearest-rank percentile. Sample coverage accompanies these values; a partial observation is not a complete benchmark. These calculations do not measure new game images, actual monitor FPS, display latency or input-to-image latency.
-
-Missing intervals, a session's first frame, incomplete data and discarded measurements should remain visible as gaps. A missing value must not appear as `0 ms` or infinite FPS. Repeated presentations and multiple output handles need separate evaluation.
-
-## CPU measurement limits
-
-Existing CPU timings use `std::chrono::steady_clock` to measure elapsed time in instrumented phases. This can include work, waiting, synchronization or interruptions. It is not a complete CPU sampling profile of all game threads. Source: [Clock and metric structure](https://github.com/boykopovar/AnyPS5/blob/197ffac97203d715a258a28b432fa2eedbf8be6f/core/libs/prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp#L20).
-
-Inclusive phases may nest or overlap. FrameRift must not add them into an apparent total CPU frame time without checking their relationships. Background work completed between two flips is not necessarily attributable to just one of those frames.
-
-The resource panel already includes Linux process RSS from the bridge worker, with its own sampling age. Process CPU utilization remains a possible later source. Whole-process CPU utilization, the cost of an instrumented driver phase and the CPU time of a particular game thread are different quantities.
-
-## Existing GPU profiling and its limits
-
-The recorder creates Vulkan timestamp query pools and places start/end markers around instrumented regions. Output aggregates GPU times by program and command class over roughly ten seconds. It includes batch spans, covered ranges, unattributed time and a counter for measurements dropped at the range limit. Hotspot output lists a limited number of the most expensive programs. Sources: [Query creation and markers](https://github.com/boykopovar/AnyPS5/blob/197ffac97203d715a258a28b432fa2eedbf8be6f/core/libs/prx/libSceAgcDriver/Graphics/src/Recorder.cpp#L1880), [Evaluation and aggregates](https://github.com/boykopovar/AnyPS5/blob/197ffac97203d715a258a28b432fa2eedbf8be6f/core/libs/prx/libSceAgcDriver/Graphics/src/Recorder.cpp#L2333).
-
-FrameRift could build a GPU hotspot table from this output. Existing aggregates do not provide a complete GPU timeline for each frame. Program addresses are not automatically resolved shader names. Instrumented GPU duration is not overall GPU utilization, temperature or VRAM usage.
-
-Vulkan queries return results asynchronously. Availability, queue support, timestamp resolution and query cost must be checked on the actual GPU. A shared CPU/GPU timeline needs a defined mapping between time domains; raw GPU ticks and host time cannot simply be equated. This extension remains open. Source: [Vulkan queries and timestamp queries](https://docs.vulkan.org/spec/latest/chapters/queries.html#queries-timestamps).
-
-GPU results may become available only after a later flip. The existing timing code describes GPU busy/gap data for completed batches; it does not guarantee that every value belongs exclusively to the currently displayed frame. Source: [Completed-batch attribution](https://github.com/boykopovar/AnyPS5/blob/197ffac97203d715a258a28b432fa2eedbf8be6f/core/libs/prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp#L145).
-
-## Planned measurement view
-
-The proposed [profiler workspace](profiler-workspace.md) uses the following order, without requiring a full debugger:
-
-1. Game session with process status and live logs; available in the console.
-2. Structured frame summaries from the implemented bridge adapter; timing-file import remains a separate possible source.
-3. The implemented **FPS (estimated)** card, flip-interval chart and statistics with explicit calculations.
-4. Implemented selected-frame details and latest shader/memory state; detailed driver/GPU execution tables remain planned, with their actual measurement window and source.
-5. Immutable telemetry snapshots and optional asynchronous screenshots with frame/capture association.
-6. Durable per-game input scripts, optional scheduled starts and capture checkpoints, shared by UI and future MCP tools.
-
-Pausing charts should initially freeze only the FrameRift view. It does not stop the game process or GPU. Breakpoints, single-stepping, call stacks, memory inspection and shader debugging require further debugger or capture integration. A window titled "Profiler" does not provide those capabilities by itself.
-
-## Planned structured telemetry
-
-In the longer term, an explicit optional telemetry interface is preferable to continually interpreting human-readable log lines. It would need to produce data at suitable AnyPS5 measurement points; FrameRift alone cannot reliably read internal driver phases from another process's window.
-
-The following fields are a **proposal**, not an existing AnyPS5 protocol:
-
-| Field group | Proposed contents |
+| Display | Meaning |
 | --- | --- |
-| Protocol | Version, record type, available capabilities |
-| Session | FrameRift session ID, process identity, title ID, artifact/library version |
-| Correlation | Measurement source, frame ID, output handle, submission/batch ID, queue ID where available |
-| Time | Defined time origin, unit, time domain, start/end or interval |
-| Quality | Completeness, drop counter, measurement resolution, valid/not yet available |
-| Metric | Stable name, unit, inclusive/exclusive semantics, count, sum, maximum |
+| Estimated FPS | Valid flip-interval count divided by summed duration, over the latest source-time second |
+| Mean / P95 / worst | Main-output flip-completion intervals; P95 uses nearest rank |
+| FPS history | Completed flips in the preceding full source second; a reliable baseline is required |
+| Selected / latest / worst frame | Runtime correlation ID and output stream; selection does not pause the game |
+| Shader activity | Translation, specialization, pipeline build and shader-module work; active gauges and process-lifetime completed counts |
+| Elapsed / window | Completed/failed work wall time over the displayed observed resource window |
+| Memory | Linux process RSS, texture-cache accounting/budgets and driver-estimated device-local heap usage/budget |
 
-A frame ID is valid within a uniquely named session and measurement source. It is not globally unique across restarts. Late GPU data should retain its original submission/batch correlation; arrival time in the launcher is not frame attribution.
+- UI refresh: at most once per second. History: up to 60 source seconds / 8192 samples; MCP returns bounded presentation history.
+- FPS plot uses 0-75 with labels at 13, 30 and 60; values above the plot range remain in measurements. Interval scale is automatic.
+- Catch-up flips do not become individual reciprocal-interval FPS spikes. Missing samples and long pauses break the line; the time axis advances during stalls.
+- Coverage, gaps, source window and ages are in **Info**. Tooltips retain precise values; displayed milliseconds are rounded.
+- Frame data becomes stale after one second without a sample, even with heartbeats. Resources have independent freshness and source ages.
+- OFF/disconnect retains the last observation visibly inactive/stale; new session/epoch clears history. Output-generation changes clear frames but preserve process resources.
+- Resource updates do not belong to the selected frame. A cached GPU sample keeps its original age.
+- The consumer card shows **No data** until per-frame attribution exists; unavailable Driver CPU/GPU modes stay disabled.
 
-FrameRift's transport is IPv4 loopback UDP with versioned JSON packets, session/peer pinning and advertised capabilities. The [implemented protocol](debug-bridge.md) defines frame and shader/resource payloads; runtime execution belongs to the adapter. The detailed CPU/GPU execution records described above remain proposals.
+## Interpretation limits
 
-## Overhead and backpressure
+- Flip completion is not confirmed monitor scanout, simulation/input ticks or input-to-image latency.
+- Work durations include waits and scheduling, overlap and nest. Do not add them into frame time, CPU utilization or GPU execution time.
+- All instrumented waits/submission/preparation records are exposed in MCP `resources.activity`; `activity_window` carries observed deltas and actual window duration.
+- A stale frame stream with fresh active work reports evidence, not a proven cause. Otherwise the cause is unknown; zero active work does not prove idle.
+- Cache bytes and heap estimates have different scopes; do not sum them into total RAM/VRAM.
+- No detailed CPU sampling, GPU program timeline, timing-file import, saved snapshots, screenshots or input scripts yet. [Remaining workspace plan](profiler-workspace.md).
 
-Instrumentation can change runtimes. Extra clock queries, locks, formatting, allocations, query pools and data transfer all contribute to measurement overhead. FrameRift should measure this overhead and label measurement modes clearly without promising an unsupported percentage in advance.
+## Logs and files
 
-Existing output paths have different overload policies:
+- Output-only VTE; merged stdout/stderr, ANSI colors/progress and 5000 scrollback lines. No shell, PTY or file polling.
+- Turn off **Follow output** to inspect history; Copy, Ctrl+C or Ctrl+Shift+C copies selected text.
+- Complete raw output: `<data-root>/logs/<game-id>/<session-id>/game.log`; conversion: `conversion.log`; guard samples: `memory.jsonl`.
+- Logs remain after exit and the console clears on the next session. MCP `get_game_log` defaults to five lines from the current/latest managed session.
+- AnyPS5's optional `frame-timing.log` belongs to the game's working directory; FrameRift does not import it.
 
-- `FrameTimingLog` limits its queue to 256 reports and throws when it is full. The present loop treats timing errors as errors and may terminate the process.
-- `ProfileOutput` has a bounded buffer, drops chunks when capacity is insufficient and reports those drops. Write failures can still propagate as errors.
+## Source map
 
-Sources: [Timing queue](https://github.com/boykopovar/AnyPS5/blob/197ffac97203d715a258a28b432fa2eedbf8be6f/core/libs/prx/libSceVideoOut/include/FrameTimingLog.hpp#L36), [Timing error handling](https://github.com/boykopovar/AnyPS5/blob/197ffac97203d715a258a28b432fa2eedbf8be6f/core/libs/prx/libSceVideoOut/src/VideoOutDriver.cpp#L619), [ProfileOutput](https://github.com/boykopovar/AnyPS5/blob/197ffac97203d715a258a28b432fa2eedbf8be6f/core/libs/prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp#L41).
-
-The optional bridge uses a bounded producer buffer with visible drop counters. A full buffer drops samples; UDP transmission never waits for receipt. Data formatting and UI updates happen outside hot rendering and driver paths. Detailed CPU/GPU measurements remain future work and should be enabled deliberately.
-
-## Open experiments and later validation
-
-| Experiment | Question to resolve |
-| --- | --- |
-| Timing import | Can versions, units, partially written lines and data gaps be detected reliably? |
-| Frame correlation | How are multiple outputs, queued work and late batches attributed? |
-| GPU timeline | Which new events and time calibration are needed beyond the existing aggregates? |
-| IPC | What event rate and runtime overhead can the implemented UDP transport sustain? |
-| Overhead | How do game-only execution, logs, frame timing, GPU profiling and FrameRift display compare? |
-| UI | Do navigation and charts remain responsive under heavy measurement or log traffic? |
-
-Later checks should cover calculations against known datasets, missing/invalid values, protocol versions, overload, connection loss and process restarts. Integration measurements should use identical game/driver/library conditions and multiple runs. A design image is neither a benchmark nor confirmation of game compatibility.
+- Receiver/model: `src/runtime/bridge.cpp`; dashboard/console: `src/ui/profiler.cpp`; process output: `src/runtime/log.cpp`.
+- AnyPS5: `core/libs/prx/libkernel/System/src/DebugBridge.cpp`, `libSceVideoOut/src/VideoOutDriver.cpp` and `libSceAgcDriver/Execution/include/PerformanceTimer.hpp`.
+- GPU queries/aggregates: AnyPS5 `libSceAgcDriver/Graphics/src/Recorder.cpp`; cache/budget accounting: `Graphics/src/ShaderResources.cpp`.
+- Native screenshots: [profiler visual reference](profiler-design-review.md). No monitoring-overhead benchmark is established.

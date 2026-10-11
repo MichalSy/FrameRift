@@ -7,54 +7,28 @@ Additional attribution terms: see NOTICE in the repository root.
 
 # Decisions and open questions
 
-## Product decisions
+## Decisions
 
-| Topic | Decision |
-| --- | --- |
-| Name | **FrameRift** |
-| Audience | Players and users investigating game performance |
-| Platforms | Native Windows and Linux desktop application; Linux is the current development platform |
-| UI | Custom, modern and compact, with dark graphite surfaces, cyan accents and restrained animations |
-| Views | Library and Profiler console implemented; an embedded game/profiler view is planned |
-| Library | Selected-game hero, then **Recently played**, then **Your games** |
-| Planned game view | Game at the center, with optional analysis panels |
-| Planned game-view modes | **Playing** and **Profiler** |
-| Artwork | SteamGridDB as the primary source, including animated assets when available |
-| Project boundary | Independent launcher with a small integration to the modified AnyPS5 fork |
-| Storage | Games and measurements are local; the UI does not add redundant local-game labels |
-| License | Original code and documentation use [AGPL-3.0-or-later](../LICENSE), including the attribution term in [NOTICE](../NOTICE) |
+- FrameRift is a native desktop library and performance workspace; Linux is the current implementation platform.
+- GTK4/C++20/CMake; SQLite/artwork cache; desktop-keyring credentials.
+- Separate game process/window; modified AnyPS5 runtime required.
+- Library and Profiler Live/Logs share one shell. UDP connection is separate from process/monitoring state.
+- UI and MCP share one managed session and normalized measurement model.
+- Stable game IDs for code/save/log paths. Rebuild touches generated code only.
+- SteamGridDB supplies real artwork; generated concepts are design references.
+- Original code/docs use [AGPL-3.0-or-later](../LICENSE) and attribution terms in [NOTICE](../NOTICE).
 
-The two [design concepts](../assets/design/README.md) illustrate this direction. Their game artwork and measurements do not establish compatibility or implemented profiling features.
+## Open questions
 
-## Technical choices and assumptions
+- Verified gameplay/platform matrix and clean Windows/Linux packaging.
+- Window embedding, backend choice, resizing, high DPI and input focus across Windows/X11/Wayland.
+- Accurate per-frame CPU and delayed GPU attribution; shared time domains and measurement overhead.
+- Snapshot/export format, asynchronous capture costs and artifact association.
+- Input hook/scheduling semantics, recovery after lost events and controller navigation.
+- Multiple installations/builds, manual artwork matching and local-icon fallback.
+- Dependency packaging/license inventory; AnyPS5 remains separately licensed.
 
-| Choice or proposal | Purpose | Remaining validation |
-| --- | --- | --- |
-| C++20 and CMake | Current native implementation and platform integration | Reproducible Windows build alongside Linux |
-| GTK4 | Current library toolkit | Windows packaging, window integration and animation behavior |
-| Optional libadwaita | Adaptive native components if needed | Styling and deployment requirements |
-| Qt 6 Quick/QML alternative | Custom native UI and relevant window APIs | Equivalent integration experiment if the GTK approach proves unsuitable |
-| libcurl, JSON-GLib and SQLite | Artwork requests, metadata and library cache | Packaging and maintenance requirements |
-| Optional telemetry protocol | Measurements with clear semantics and frame correlation | Small runtime sender with measurable overhead |
-| Cooperative window host | Running game inside the application | Separate evidence for Windows, X11 and a Wayland desktop session |
+## Where to look
 
-GTK4 is implemented; optional dependencies and embedding approaches remain proposals. Window integration may influence future toolkit choices.
-
-## Open technical questions
-
-- Which window approach works with real AnyPS5 artifacts: an exported native handle, a cooperative adapter or a hook for a limited platform case?
-- Can host and game reliably use a shared X11/XWayland path in a Wayland session? What limits remain for a native Wayland UI?
-- How should game, keyboard/mouse and controller focus behave while analysis fields are active? Background controller input needs explicit handling.
-- Which CPU/GPU measurement points should the first timing profiler provide? What does a frame ID mean across multiple submissions and delayed GPU results?
-- What overhead is acceptable for each measurement mode, and how should comparisons be reproduced?
-- Which capture and export formats should come first? Image capture is an additional data source with its own costs.
-- Can the implemented WebP animation path be verified reliably and efficiently on Windows?
-- How should multiple game outputs, builds and launch profiles be imported and displayed with minimal complexity?
-- How should manual artwork selection work, and how should desktop-keyring settings be packaged on Windows?
-- What distribution requirements apply to the dependency licenses? AnyPS5 stays separately licensed under GPL-2.0-only; VTE uses LGPL-3.0-or-later.
-
-## Extensions without a first-release commitment
-
-Detailed GPU timelines, shader hotspots, import analysis, automated performance tests, comprehensive controller navigation and broader build/relink automation remain extension ideas. Keep their descriptions concrete enough to prioritize later.
-
-The ASTRO BOT artwork in the design concepts determines neither game support nor measurement availability. Both require evidence from real builds.
+- [Current architecture](architecture.md), [runtime integration](anyps5-integration.md), [implemented bridge](debug-bridge.md).
+- [Profiler limits](profiling.md), [capture/script plan](profiler-workspace.md), [window plan](game-window-integration.md).

@@ -13,6 +13,7 @@
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <exception>
 #include <iostream>
 #include <memory>
@@ -194,6 +195,185 @@ JsonObject* tool_result(const Json& response) {
     return structured;
 }
 
+std::string timing(std::uint64_t sequence, std::uint64_t frame, std::uint64_t count,
+    std::uint64_t timestamp, const std::string& interval, std::uint64_t epoch = 1,
+    std::uint64_t drops = 0, std::uint64_t generation = 1) {
+    return packet(sequence, "event", ",\"name\":\"frame_timing\",\"frame\":" + std::to_string(frame) +
+        ",\"data\":{\"output_handle\":7,\"output_generation\":" + std::to_string(generation) +
+        ",\"completed_flip_count\":" + std::to_string(count) + ",\"timestamp_us\":" + std::to_string(timestamp) +
+        ",\"flip_interval_us\":" + interval + ",\"monitoring_epoch\":" + std::to_string(epoch) +
+        ",\"dropped_samples\":" + std::to_string(drops) + "}");
+}
+
+void near(const std::optional<double>& value, double expected, const char* failure) {
+    require(value && std::abs(*value - expected) < 0.000001, failure);
+}
+
+void check_monitoring() {
+    framerift::BridgeServer bridge(0);
+    Runtime runtime(bridge.port());
+    Runtime stranger(bridge.port());
+    framerift::McpServer mcp(bridge, 0);
+    bridge.expect_session("bridge-check-session", "PPSA01234");
+    const Json initial_status(bridge.status_json());
+    require(!bridge.status().has_frame && JSON_NODE_HOLDS_NULL(json_object_get_member(initial_status.object(), "frame")),
+        "A bridge with no measurements fabricated frame zero");
+    std::uint64_t sequence = 1;
+    runtime.send(packet(sequence, "hello", ",\"game_id\":\"PPSA01234\",\"capabilities\":[\"set_monitoring\"],\"monitoring\":{\"enabled\":false,\"epoch\":0}"));
+    wait_until([&] { return bridge.status().connected; }, "The monitoring runtime did not connect");
+    auto snapshot = bridge.monitoring_snapshot();
+    require(snapshot.supported && !snapshot.enabled && !snapshot.has_frames && snapshot.state == "disabled",
+        "Monitoring was not initially confirmed disabled without data");
+    const auto dispatched = request(mcp.endpoint(), R"({"jsonrpc":"2.0","id":20,"method":"tools/call","params":{"name":"send_command","arguments":{"name":"set_monitoring","args":{"enabled":true}}}})");
+    const Json dispatched_json(dispatched.body);
+    const auto command_id = member(tool_result(dispatched_json), "command_id");
+    const Json command(runtime.receive());
+    require(member(command.object(), "name") == "set_monitoring" &&
+        json_object_get_boolean_member(json_object_get_object_member(command.object(), "args"), "enabled"),
+        "MCP did not send the real monitoring enable command");
+    snapshot = bridge.monitoring_snapshot();
+    require(snapshot.pending && !snapshot.enabled && snapshot.requested_enabled == true && snapshot.command_id == command_id,
+        "A requested monitoring switch was incorrectly treated as confirmed");
+    sequence = 3;
+    runtime.send(packet(sequence, "command_completed", ",\"command_id\":\"" + command_id + "\",\"result\":{\"enabled\":true,\"epoch\":1}"));
+    runtime.send(packet(2, "command_received", ",\"command_id\":\"" + command_id + "\""));
+    wait_until([&] { return bridge.monitoring_snapshot().enabled; }, "Reordered monitoring completion was not confirmed");
+    snapshot = bridge.monitoring_snapshot();
+    require(!snapshot.pending && snapshot.command_status == "completed" && snapshot.state == "waiting", "Enabled monitoring without frames was not waiting");
+    runtime.send(timing(++sequence, 500, 100, 10000000, "null"));
+    wait_until([&] { return bridge.monitoring_snapshot().samples.size() == 1; }, "First monitoring completion was not normalized");
+    snapshot = bridge.monitoring_snapshot();
+    require(snapshot.has_frames && !snapshot.stats.estimated_fps && !snapshot.samples.front().flip_interval_us &&
+        snapshot.state == "waiting_for_intervals", "First null interval fabricated performance values");
+    std::uint64_t timestamp = 10000000;
+    for (std::uint64_t index = 1; index <= 4; ++index) {
+        timestamp += index * 10000;
+        runtime.send(timing(++sequence, 500 + index, 100 + index, timestamp, std::to_string(index * 10000)));
+    }
+    wait_until([&] { return bridge.monitoring_snapshot().samples.size() == 5; }, "Monitoring intervals were not normalized");
+    snapshot = bridge.monitoring_snapshot();
+    near(snapshot.stats.estimated_fps, 40.0, "Estimated FPS used receiver arrival time instead of source intervals");
+    near(snapshot.stats.mean_interval_us, 25000.0, "Monitoring mean is wrong");
+    near(snapshot.stats.p95_interval_us, 40000.0, "Monitoring P95 is not nearest rank");
+    near(snapshot.stats.worst_interval_us, 40000.0, "Monitoring worst interval is wrong");
+    near(snapshot.stats.coverage, 1.0, "Complete observed input samples did not report full coverage");
+    require(snapshot.stats.sample_count == 4 && !snapshot.stats.complete, "A short source window was presented as a full second");
+    timestamp += 1000000;
+    runtime.send(timing(++sequence, 505, 105, timestamp, "1000000"));
+    wait_until([&] { return bridge.monitoring_snapshot().samples.size() == 6; }, "Source window sample was not received");
+    snapshot = bridge.monitoring_snapshot();
+    near(snapshot.stats.mean_interval_us, 1000000.0, "The source-time last-second window included an expired boundary sample");
+    require(snapshot.stats.complete && snapshot.stats.sample_count == 1, "A full source-time window was not identified");
+    ++sequence;
+    timestamp += 40000;
+    const auto gap_packet = timing(++sequence, 508, 108, timestamp, "20000", 1, 1);
+    runtime.send(gap_packet);
+    wait_until([&] { return bridge.monitoring_snapshot().samples.size() == 7; }, "Monitoring sample gap was not accepted");
+    snapshot = bridge.monitoring_snapshot();
+    require(snapshot.stats.missing_samples == 2 && snapshot.stats.sender_dropped_samples == 1 && snapshot.stats.packet_gaps == 2,
+        "Source queue losses, sample gaps and packet gaps were conflated");
+    near(snapshot.stats.coverage, 0.5, "Monitoring coverage ignored missing completed flips");
+    require(!snapshot.stats.complete, "A sample gap was presented as complete coverage");
+    runtime.send(gap_packet);
+    stranger.send(timing(++sequence, 999, 109, timestamp + 20000, "20000", 1, 1));
+    runtime.send(packet(sequence, "heartbeat", ",\"monitoring\":{\"enabled\":true,\"epoch\":1}"));
+    const auto malformed = bridge.status().malformed_packets;
+    runtime.send(timing(++sequence, 509, 109, timestamp + 20000, "null", 1, 1));
+    runtime.send(timing(++sequence, 509, 109, timestamp - 1, "20000", 1, 1));
+    runtime.send(timing(++sequence, 509, 109, timestamp + 20000, "20000", 1, 0));
+    runtime.send(timing(++sequence, 509, 109, timestamp + 20000, "0", 1, 1));
+    runtime.send(timing(++sequence, 509, 0, timestamp + 20000, "20000", 1, 1));
+    wait_until([&] { return bridge.status().malformed_packets >= malformed + 5; }, "Invalid null, timestamp, zero or cumulative-drop state was accepted");
+    require(bridge.monitoring_snapshot().samples.size() == 7 && bridge.status().frame == 508,
+        "Duplicate, wrong-peer or invalid samples changed normalized monitoring");
+    const auto compact = request(mcp.endpoint(), R"({"jsonrpc":"2.0","id":23,"method":"tools/call","params":{"name":"get_monitoring_snapshot","arguments":{}}})");
+    const Json compact_json(compact.body);
+    auto* summary = tool_result(compact_json);
+    require(!json_object_has_member(summary, "frames") && !json_object_has_member(summary, "chart_samples") &&
+        json_object_get_int_member(json_object_get_object_member(summary, "latest_frame"), "frame") == 508 &&
+        json_object_get_int_member(json_object_get_object_member(summary, "worst_frame"), "frame") == 505 &&
+        member(json_object_get_object_member(json_object_get_object_member(summary, "stats"), "loss_scope"), "sender_dropped_samples") == "monitoring_epoch",
+        "Default monitoring MCP response omitted selected frames/loss scope or streamed unrequested history");
+    const auto queried = request(mcp.endpoint(), R"({"jsonrpc":"2.0","id":21,"method":"tools/call","params":{"name":"get_monitoring_snapshot","arguments":{"include_history":true}}})");
+    const Json queried_json(queried.body);
+    auto* result = tool_result(queried_json);
+    require(queried.status == 200 && json_object_get_boolean_member(result, "enabled") &&
+        json_array_get_length(json_object_get_array_member(result, "frames")) == 7 &&
+        member(json_object_get_object_member(result, "units"), "mean_interval_us") == "microseconds",
+        "Monitoring MCP snapshot lost typed values, bounded frames or units");
+    const auto invalid_args = request(mcp.endpoint(), R"({"jsonrpc":"2.0","id":22,"method":"tools/call","params":{"name":"get_monitoring_snapshot","arguments":{"limit":1}}})");
+    require(json_object_get_int_member(json_object_get_object_member(Json(invalid_args.body).object(), "error"), "code") == -32602,
+        "Monitoring MCP accepted undocumented arguments");
+    wait_until([&] { return bridge.monitoring_snapshot().stale; }, "One second without new samples did not mark monitoring stale");
+    require(bridge.status().connected && bridge.monitoring_snapshot().samples.size() == 7,
+        "Sample staleness disconnected the bridge or discarded historical data");
+    const Json disabled(bridge.send_command("set_monitoring", "{\"enabled\":false}"));
+    const auto disabled_id = member(disabled.object(), "command_id");
+    runtime.receive();
+    runtime.send(packet(++sequence, "heartbeat", ",\"monitoring\":{\"enabled\":false,\"epoch\":2}"));
+    wait_until([&] { return !bridge.monitoring_snapshot().enabled; }, "Heartbeat did not recover a lost monitoring completion");
+    snapshot = bridge.monitoring_snapshot();
+    require(snapshot.state == "disabled" && !snapshot.pending && snapshot.stale && snapshot.samples.size() == 7 &&
+        snapshot.monitoring_epoch == 2 && snapshot.samples.back().monitoring_epoch == 1,
+        "Disabling monitoring discarded the previous epoch or left its switch pending");
+    runtime.send(packet(++sequence, "command_completed", ",\"command_id\":\"" + disabled_id + "\",\"result\":{\"enabled\":false,\"epoch\":2}"));
+    const Json enabled(bridge.send_command("set_monitoring", "{\"enabled\":true}"));
+    const auto enabled_id = member(enabled.object(), "command_id");
+    runtime.receive();
+    runtime.send(packet(++sequence, "command_completed", ",\"command_id\":\"" + enabled_id + "\",\"result\":{\"enabled\":true,\"epoch\":3}"));
+    wait_until([&] { return bridge.monitoring_snapshot().monitoring_epoch == 3; }, "A new monitoring epoch was not accepted");
+    require(bridge.monitoring_snapshot().samples.empty(), "New monitoring activation retained old current-window data");
+    ++sequence;
+    runtime.send(timing(++sequence, 700, 500, 20000000, "20000", 3));
+    wait_until([&] { return bridge.monitoring_snapshot().samples.size() == 1; }, "Lost first-null sample blocked all later measurements");
+    snapshot = bridge.monitoring_snapshot();
+    require(!snapshot.stats.coverage && !snapshot.stats.complete && snapshot.stats.estimated_fps,
+        "A lost first-null baseline was incorrectly presented as complete coverage");
+    runtime.send(timing(++sequence, 701, 1, 20020000, "null", 3, 0, 2));
+    wait_until([&] { return bridge.monitoring_snapshot().output_generation == 2; }, "Output generation reset was not applied");
+    require(bridge.monitoring_snapshot().samples.size() == 1 && !bridge.monitoring_snapshot().stats.estimated_fps,
+        "A new output stream mixed intervals from the previous stream");
+    const Json noop(bridge.send_command("set_monitoring", "{\"enabled\":true}"));
+    const auto noop_id = member(noop.object(), "command_id");
+    runtime.receive();
+    require(bridge.monitoring_snapshot().pending, "A new no-op monitoring request was not initially pending");
+    runtime.send(packet(++sequence, "heartbeat", ",\"monitoring\":{\"enabled\":true,\"epoch\":3}"));
+    wait_until([&] { return !bridge.monitoring_snapshot().pending; }, "Same-epoch heartbeat did not resolve an idempotent monitoring request");
+    require(bridge.monitoring_snapshot().enabled && bridge.monitoring_snapshot().monitoring_epoch == 3,
+        "Idempotent monitoring confirmation reset its source epoch");
+    runtime.send(packet(++sequence, "command_completed", ",\"command_id\":\"" + noop_id + "\",\"result\":{\"enabled\":true,\"epoch\":3}"));
+    timestamp = 20020000;
+    std::uint64_t count = 1;
+    for (unsigned batch = 0; batch < 1030; ++batch) {
+        for (unsigned index = 0; index < 8; ++index) {
+            ++count;
+            timestamp += 1000;
+            runtime.send(timing(++sequence, 700 + count, count, timestamp, "1000", 3, 0, 2));
+        }
+        wait_until([&] { return bridge.status().frame == 700 + count; }, "Bounded monitoring batch was not received");
+    }
+    snapshot = bridge.monitoring_snapshot();
+    require(snapshot.samples.size() == 8192 && snapshot.history_truncated, "High-rate monitoring history was not bounded by sample count");
+    const Json bounded(bridge.monitoring_snapshot_json(true));
+    require(json_array_get_length(json_object_get_array_member(bounded.object(), "chart_samples")) == 600 &&
+        json_array_get_length(json_object_get_array_member(bounded.object(), "frames")) == 20 &&
+        json_object_get_boolean_member(bounded.object(), "chart_downsampled"), "Monitoring MCP payload did not bound its charts and selected frames");
+    timestamp += 61000000;
+    ++count;
+    runtime.send(timing(++sequence, 700 + count, count, timestamp, "61000000", 3, 0, 2));
+    wait_until([&] { return bridge.monitoring_snapshot().samples.size() == 1; }, "Source-time history retained samples older than sixty seconds");
+    runtime.send(packet(++sequence, "goodbye"));
+    wait_until([&] { return !bridge.status().connected; }, "Monitoring runtime did not disconnect");
+    snapshot = bridge.monitoring_snapshot();
+    require(snapshot.stale && snapshot.samples.size() == 1 && snapshot.stats.estimated_fps,
+        "Disconnect discarded the last source-time performance snapshot");
+    bridge.end_session("bridge-check-session");
+    require(bridge.monitoring_snapshot().samples.size() == 1, "Managed process exit discarded the last monitoring history");
+    bridge.expect_session("monitoring-next-session", "PPSA01234");
+    require(bridge.monitoring_snapshot().samples.empty() && !bridge.monitoring_snapshot().has_frames && !bridge.status().has_frame,
+        "A new managed session inherited old monitoring history or frame identity");
+}
+
 } // namespace
 
 int main() {
@@ -268,8 +448,8 @@ int main() {
         const auto listed = request(mcp.endpoint(), R"({"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}})");
         const Json listed_json(listed.body);
         auto* tools = json_object_get_array_member(rpc_result(listed_json), "tools");
-        require(listed.status == 200 && tools && json_array_get_length(tools) == 4, "MCP did not expose the four bridge tools");
-        for (const auto* expected : {"get_bridge_status", "get_events", "send_command", "get_command"}) {
+        require(listed.status == 200 && tools && json_array_get_length(tools) == 5, "MCP did not expose the five bridge tools");
+        for (const auto* expected : {"get_bridge_status", "get_monitoring_snapshot", "get_events", "send_command", "get_command"}) {
             bool found = false;
             for (guint index = 0; index < json_array_get_length(tools); ++index)
                 found |= member(json_array_get_object_element(tools, index), "name") == expected;
@@ -336,6 +516,7 @@ int main() {
         wait_until([&] { return !bridge.status().connected; }, "A silent runtime did not expire its connection", std::chrono::seconds(7));
         require(!bridge.status().error.empty(), "Runtime heartbeat expiry was not reported");
         bridge.end_session("ring-check-session");
+        check_monitoring();
         std::cout << "UDP session, live events, command receipt and HTTP MCP checks passed\n";
         return 0;
     } catch (const std::exception& error) {

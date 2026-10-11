@@ -7,15 +7,15 @@ Additional attribution terms: see NOTICE in the repository root.
 
 # Debug bridge and MCP
 
-FrameRift implements the receiving/command side of an optional runtime bridge. A loopback UDP worker receives events independently of GTK rendering. A local MCP server exposes those events and queues commands for the connected runtime. AnyPS5 has an optional connection-only sender; game measurements, input execution and screenshot capture remain separate work.
+FrameRift implements the receiving/command side of an optional runtime bridge. A loopback UDP worker receives events independently of GTK rendering. A local MCP server exposes those events, normalized frame-pacing measurements and asynchronous commands. A bridge-enabled AnyPS5 build provides frame monitoring; input execution and screenshot capture remain separate work.
 
 ## Current capabilities
 
-The running FrameRift app exposes nine MCP tools. Library listing, managed game start/stop, asynchronous process status and recent log lines work today using the same game lifecycle as the UI. These five tools do not require a connected game bridge. Process output continues into complete session log files.
+The running FrameRift app exposes ten MCP tools. Library listing, managed game start/stop, asynchronous process status and recent log lines use the same game lifecycle as the UI. These five tools do not require a connected game bridge. Process output continues into complete session log files.
 
-The four bridge tools expose connection state, buffered events and asynchronous command receipt/completion. FrameRift's UDP receiving/command server is implemented. A bridge-enabled AnyPS5 build can connect and maintain liveness, with an empty capability list. It produces no measurements and cannot apply automated inputs or capture frames. A connection alone does not prove rendering progress. The current server neither stores input scripts nor offers script-list/run tools.
+The bridge tools expose connection state, buffered events, asynchronous command receipt/completion and a normalized monitoring snapshot shared with the Live UI. AnyPS5 advertises `set_monitoring`; monitoring starts off and emits main-output frame summaries when activated. A connection alone does not prove rendering progress. The current adapter cannot apply automated inputs or capture frames, and FrameRift neither stores input scripts nor offers script-list/run tools.
 
-The proposed live profiler, durable game scripts, snapshots and future script MCP tools are specified separately in [Profiler workspace and game input scripts](profiler-workspace.md). That document and its ImageGen references describe planned functionality.
+The larger profiler design, saved measurement snapshots, durable game scripts and future script MCP tools are specified separately in [Profiler workspace and game input scripts](profiler-workspace.md). Its ImageGen references include later functionality beyond the current frame-pacing dashboard.
 
 ## Server lifetime and configuration
 
@@ -39,13 +39,15 @@ FRAMERIFT_GAME_ID=<stable game ID>
 
 Conversion receives none of these bridge variables. Spawn failure or process exit detaches the session and rejects late handshakes for that session. Before any managed launch, a separately launched local runtime can connect using its own nonempty session/game IDs. Only one peer is connected at a time.
 
-### Connection-only AnyPS5 build
+### AnyPS5 monitoring build
 
 Configure AnyPS5 with `-DANYPS5_ENABLE_DEBUG_BRIDGE=ON` and rebuild its patched runtime libraries. The default is `OFF`: ordinary builds contain neither the worker nor the startup call. The included bridge starts when the video output driver initializes, using the managed launch variables above. All four variables must be valid; only `127.0.0.1` is accepted. Set `APS5_DEBUG_BRIDGE=0` to disable the worker for a run.
 
-One independent thread uses a persistent nonblocking UDP socket. It sends `hello`, one-second heartbeats and periodic repeated `hello` packets without waiting for a reply. Normal runtime shutdown sends a best-effort `goodbye`; forced termination uses the existing disconnect/timeout behavior. A missing receiver does not stop the game or alter its default logs.
+One independent thread owns a persistent nonblocking UDP socket. It sends `hello`, one-second heartbeats and periodic repeated `hello` packets, receives monitoring commands and sends queued measurements. Normal runtime shutdown sends a best-effort `goodbye`; forced termination uses the existing disconnect/timeout behavior. A missing receiver does not stop the game or alter its default logs.
 
-This first adapter advertises `capabilities: []` and omits `frame`. `get_bridge_status` can show connected while `get_events` is empty and `received_events` remains zero. Monitoring, inputs and capture commands are rejected as unavailable. Structured telemetry and command execution are later integration steps.
+The adapter advertises `capabilities: ["set_monitoring"]`. Send `set_monitoring` with `{ "enabled": true }` to activate collection, or `false` to stop it. Command receipt is distinct from completion; hello/heartbeat monitoring state also confirms the current enabled state and epoch. Input and capture commands remain unavailable. Older connection-only builds with no capability remain supported and show monitoring as unavailable.
+
+Collection does not require `APS5_ENABLE_TIMING_LOG`, `APS5_PROFILE_DRAW` or `APS5_PROFILE_GPU`. Default file logging keeps its existing behavior. The presentation thread publishes a fixed-size sample to a bounded nonblocking queue after a successful main-output flip; closed/cancelled requests do not count. The bridge worker handles formatting and transport. Saturation drops measurements rather than delaying frame completion.
 
 ## MCP client
 
@@ -63,6 +65,7 @@ POST requests use `Content-Type: application/json` and `Accept: application/json
 | `get_game_status` | `{}` | Current/last managed session state, IDs, log paths, exit status and error |
 | `get_game_log` | `{ "lines": 5 }` | Last requested log lines; defaults to 5, maximum 200 |
 | `get_bridge_status` | `{}` | Connection, session/game IDs, UDP port, frame, capabilities and counters |
+| `get_monitoring_snapshot` | `{ "include_history": false }` | Shared Live measurements, latest/worst frame, scope, freshness and completeness; optional bounded history |
 | `get_events` | `{ "after": 0, "limit": 100 }` | Events after a local cursor; limit 1–100, immediately returns available data |
 | `send_command` | `{ "name": "set_monitoring", "args": { "enabled": true } }` | Command ID and initial `pending` status |
 | `get_command` | `{ "command_id": "<returned ID>" }` | Latest status, attempts, optional result/error |
@@ -122,10 +125,12 @@ FrameRift pins that session and source address/port. Wrong peers or managed-sess
 An event carries a name and an object payload:
 
 ```json
-{"protocol":"framerift.bridge","version":1,"type":"event","session_id":"session-123","sequence":3,"frame":500,"name":"frame_timing","data":{"flip_interval_ms":16.8}}
+{"protocol":"framerift.bridge","version":1,"type":"event","session_id":"session-123","sequence":3,"frame":500,"name":"frame_timing","data":{"output_handle":1,"output_generation":1,"completed_flip_count":500,"timestamp_us":123456789,"flip_interval_us":16667,"monitoring_epoch":1,"dropped_samples":0}}
 ```
 
-Metric names/units are adapter-defined. No log parsing or synthetic measurements occur here. `goodbye` explicitly disconnects; it uses the same envelope as a heartbeat with `type` changed.
+The normalized `frame_timing` contract uses integer microseconds from the game monotonic clock. `frame` preserves the existing global `FrameTiming` correlation ID, while `(session_id, output_handle, output_generation, completed_flip_count)` identifies a main-output completion. These IDs are not simulation/input ticks. `flip_interval_us` is `null` for the first completion after activation or output reset. `monitoring_epoch` changes when monitoring is switched, and `dropped_samples` reports cumulative producer drops within that epoch. Interval statistics never mix sessions, epochs or output generations.
+
+Hello and heartbeats carry `monitoring: { "enabled": false, "epoch": 0 }` with the current state. `set_monitoring` completion reports the same fields in `result`, using `epoch`. This periodic state report also makes a lost completion observable. Other metric names/units remain adapter-defined. No log parsing or synthetic measurements occur here. `goodbye` explicitly disconnects; it uses the same envelope as a heartbeat with `type` changed.
 
 FrameRift sends commands asynchronously from the UDP worker:
 
@@ -148,8 +153,10 @@ Commands are sent at most three times, roughly 500 ms apart, with the same `comm
 
 The worker processes at most 32 received datagrams before servicing outgoing commands. Telemetry receives no acknowledgement and never waits for MCP clients. The event ring keeps the newest 512 events, including accepted command acknowledgements. Each gets a local increasing `event_id`; pass returned `next_event_id` as the next `after` cursor. `oldest_event_id` and `lost_history` expose overwritten history. Duplicate/late telemetry is discarded, forward packet gaps increment `missing_events`, and invalid/oversized datagrams increment `malformed_packets`. These counters are separate from ring-history loss.
 
+Normalized frame history is separate: up to 60 source seconds and 8192 samples, collected continuously in `src/runtime`. UI rendering occurs at most once per second. `get_monitoring_snapshot` reads that same model without changing monitoring or saving a file. Omit arguments for a compact summary with `stats`, `latest_frame` and `worst_frame`; pass `include_history: true` for up to 600 chart records and 20 recent frames. General packet gaps, missing completion samples and producer drops are distinct counters. `stats.loss_scope` labels packet gaps and sender drops as cumulative within the monitoring epoch, and missing samples as belonging to the source window. Missing the initial stream baseline or a complete source second marks the window incomplete. One second without new samples marks retained data stale even if heartbeats continue. Stopping monitoring/disconnecting retains the last observation; new session/stream data starts a fresh history.
+
 At most 64 commands can await receipt/completion, with 128 command records retained. Older terminal records are removed when capacity is needed. Bridge events remain in memory; complete process logs continue through the existing session-log path.
 
-For input automation, the intended runtime contract is to upload a whole sequence before it starts: an optional absolute start frame such as `500`, followed by offsets such as `+20` relative to the previous **planned** action, with explicit button down/up. Omitting a start uses the next available input boundary after acceptance, as specified in the [script design](profiler-workspace.md). FrameRift can forward a sequence in `schedule_inputs.args` when a runtime advertises support; it does not interpret those offsets or execute inputs. The connection-only adapter advertises no such support. Screenshot commands likewise require runtime support; image transfer and a dashboard are not implemented in this slice.
+For input automation, the intended runtime contract is to upload a whole sequence before it starts: an optional absolute start frame such as `500`, followed by offsets such as `+20` relative to the previous **planned** action, with explicit button down/up. Omitting a start uses the next available input boundary after acceptance, as specified in the [script design](profiler-workspace.md). FrameRift can forward a sequence in `schedule_inputs.args` when a runtime advertises support; it does not interpret those offsets or execute inputs. The current adapter advertises no input support. Screenshot commands likewise require future runtime support; image transfer is not implemented.
 
-The native `debug_bridge` check exchanges actual UDP packets and HTTP MCP requests with a mock runtime. `game_mcp` checks library queries, managed start/stop, preparation errors and log tails using temporary game/runtime fixtures. AnyPS5's connection checks exercise actual loopback datagrams, liveness, shutdown and disabled/invalid configuration. Real gameplay timing, overhead and end-to-end input/screenshot behavior remain to be measured after those capabilities exist.
+The native `debug_bridge` check exchanges actual UDP packets and HTTP MCP requests with a mock runtime. `game_mcp` checks library queries, managed start/stop, preparation errors and log tails using temporary game/runtime fixtures. AnyPS5's checks exercise actual loopback datagrams, monitoring state/deduplication, queue overflow, liveness, shutdown, disabled/invalid configuration and real main-output flips under a native display. A live Bomberman run verified frame measurements, on/off commands and retained stale data while heartbeats continued after rendering stopped. This is functional verification; monitoring overhead and gameplay compatibility have not been benchmarked. End-to-end input/screenshot checks belong to later capabilities.

@@ -12,6 +12,7 @@
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <deque>
 #include <limits>
 #include <mutex>
@@ -30,6 +31,9 @@ constexpr std::size_t command_limit = 128;
 constexpr std::size_t pending_limit = 64;
 constexpr auto peer_timeout = std::chrono::seconds(5);
 constexpr auto retry_delay = std::chrono::milliseconds(500);
+constexpr std::size_t monitoring_limit = 8192;
+constexpr std::uint64_t monitoring_history_us = 60 * 1000000;
+constexpr std::uint64_t monitoring_window_us = 1000000;
 using Clock = std::chrono::steady_clock;
 
 struct ObjectUnref {
@@ -93,6 +97,40 @@ std::uint64_t unsigned_member(JsonObject* object, const char* name) {
     return static_cast<std::uint64_t>(value);
 }
 
+bool boolean_member(JsonObject* object, const char* name) {
+    auto* node = json_object_get_member(object, name);
+    if (!node || !JSON_NODE_HOLDS_VALUE(node) || json_node_get_value_type(node) != G_TYPE_BOOLEAN)
+        throw std::runtime_error(std::string("Expected boolean: ") + name);
+    return json_node_get_boolean(node);
+}
+
+std::optional<std::pair<bool, std::uint64_t>> monitoring_member(JsonObject* object) {
+    auto* node = json_object_get_member(object, "monitoring");
+    if (!node) return {};
+    if (!JSON_NODE_HOLDS_OBJECT(node)) throw std::runtime_error("Expected monitoring object");
+    auto* value = json_node_get_object(node);
+    return std::pair{boolean_member(value, "enabled"), unsigned_member(value, "epoch")};
+}
+
+MonitoringSample timing_sample(JsonObject* object, JsonObject* data) {
+    MonitoringSample sample;
+    sample.frame = unsigned_member(object, "frame");
+    sample.output_handle = unsigned_member(data, "output_handle");
+    sample.output_generation = unsigned_member(data, "output_generation");
+    sample.completed_flip_count = unsigned_member(data, "completed_flip_count");
+    if (!sample.completed_flip_count) throw std::runtime_error("Expected a completed flip count greater than zero");
+    sample.timestamp_us = unsigned_member(data, "timestamp_us");
+    sample.monitoring_epoch = unsigned_member(data, "monitoring_epoch");
+    sample.dropped_samples = unsigned_member(data, "dropped_samples");
+    auto* interval = json_object_get_member(data, "flip_interval_us");
+    if (!interval) throw std::runtime_error("Expected flip_interval_us");
+    if (!JSON_NODE_HOLDS_NULL(interval)) {
+        sample.flip_interval_us = unsigned_member(data, "flip_interval_us");
+        if (!*sample.flip_interval_us) throw std::runtime_error("Expected a positive flip interval");
+    }
+    return sample;
+}
+
 bool pending(const std::string& state) { return state == "pending" || state == "received"; }
 
 bool same_peer(GSocketAddress* a, GSocketAddress* b) {
@@ -143,6 +181,19 @@ struct BridgeServer::Impl {
     std::uint64_t incoming_sequence = 0;
     bool sequence_initialized = false;
     Clock::time_point last_packet;
+    bool monitoring_known = false;
+    bool monitoring_enabled = false;
+    std::uint64_t monitoring_epoch = 0;
+    std::uint64_t monitoring_packet_base = 0;
+    std::uint64_t monitoring_drops = 0;
+    std::uint64_t monitoring_request_epoch = 0;
+    std::optional<bool> monitoring_requested;
+    std::string monitoring_command;
+    bool monitoring_confirmed_request = false;
+    bool monitoring_baseline_known = false;
+    bool monitoring_truncated = false;
+    Clock::time_point last_sample;
+    std::deque<MonitoringSample> monitoring_samples;
 
     explicit Impl(std::uint16_t port) {
         GError* error = nullptr;
@@ -187,6 +238,77 @@ struct BridgeServer::Impl {
         incoming_sequence = 0;
         sequence_initialized = false;
         events.clear();
+        monitoring_known = false;
+        monitoring_enabled = false;
+        monitoring_epoch = 0;
+        monitoring_requested.reset();
+        monitoring_command.clear();
+        monitoring_confirmed_request = false;
+        clear_monitoring();
+    }
+
+    void clear_monitoring() {
+        monitoring_samples.clear();
+        monitoring_baseline_known = false;
+        monitoring_truncated = false;
+        monitoring_drops = 0;
+        monitoring_packet_base = state.missing_events;
+    }
+
+    void update_monitoring(bool enabled, std::uint64_t epoch) {
+        if (monitoring_known && epoch < monitoring_epoch) return;
+        if (monitoring_known && epoch == monitoring_epoch && enabled != monitoring_enabled)
+            throw std::runtime_error("Monitoring state changed without a new epoch");
+        if (enabled && (!monitoring_known || epoch > monitoring_epoch)) clear_monitoring();
+        monitoring_known = true;
+        monitoring_enabled = enabled;
+        monitoring_epoch = epoch;
+        if (monitoring_requested && *monitoring_requested == enabled && epoch >= monitoring_request_epoch)
+            monitoring_confirmed_request = true;
+    }
+
+    void accept_sample(MonitoringSample sample) {
+        if (!capabilities.contains("set_monitoring")) throw std::runtime_error("Unadvertised monitoring stream");
+        if (monitoring_known && (sample.monitoring_epoch < monitoring_epoch ||
+            (sample.monitoring_epoch == monitoring_epoch && !monitoring_enabled))) return;
+        const bool new_epoch = !monitoring_known || sample.monitoring_epoch > monitoring_epoch;
+        const bool new_stream = monitoring_samples.empty() || new_epoch ||
+            monitoring_samples.back().output_handle != sample.output_handle ||
+            monitoring_samples.back().output_generation != sample.output_generation;
+        if (!new_epoch && sample.dropped_samples < monitoring_drops)
+            throw std::runtime_error("Monitoring drop count regressed");
+        if (!new_stream) {
+            const auto& previous = monitoring_samples.back();
+            if (sample.timestamp_us <= previous.timestamp_us || sample.completed_flip_count <= previous.completed_flip_count)
+                throw std::runtime_error("Monitoring source counters are not increasing");
+            if (!sample.flip_interval_us) throw std::runtime_error("Unexpected monitoring interval reset");
+            const auto elapsed = sample.timestamp_us - previous.timestamp_us;
+            if (*sample.flip_interval_us > elapsed + 1)
+                throw std::runtime_error("Monitoring interval exceeds its source-time span");
+            sample.missing_before = sample.completed_flip_count - previous.completed_flip_count - 1;
+            if (!sample.missing_before && (elapsed > *sample.flip_interval_us + 1))
+                throw std::runtime_error("Monitoring interval disagrees with source timestamps");
+        } else if (!new_epoch && !monitoring_samples.empty() &&
+            sample.output_handle == monitoring_samples.back().output_handle &&
+            sample.output_generation < monitoring_samples.back().output_generation) {
+            throw std::runtime_error("Monitoring output generation regressed");
+        }
+        update_monitoring(true, sample.monitoring_epoch);
+        if (new_stream) {
+            monitoring_samples.clear();
+            monitoring_truncated = false;
+            monitoring_baseline_known = !sample.flip_interval_us.has_value();
+        }
+        monitoring_drops = sample.dropped_samples;
+        last_sample = Clock::now();
+        monitoring_samples.push_back(std::move(sample));
+        const auto newest = monitoring_samples.back().timestamp_us;
+        while (monitoring_samples.size() > 1 && newest - monitoring_samples.front().timestamp_us > monitoring_history_us)
+            monitoring_samples.pop_front();
+        while (monitoring_samples.size() > monitoring_limit) {
+            monitoring_samples.pop_front();
+            monitoring_truncated = true;
+        }
     }
 
     void add_event(JsonNode* packet) {
@@ -231,6 +353,9 @@ struct BridgeServer::Impl {
         std::string command_id;
         std::string result;
         std::string failure;
+        std::optional<MonitoringSample> sample;
+        std::optional<std::pair<bool, std::uint64_t>> monitoring;
+        if (type == "hello" || type == "heartbeat") monitoring = monitoring_member(object);
         if (type == "hello") {
             game = string_member(object, "game_id", 128);
             auto* list_node = json_object_get_member(object, "capabilities");
@@ -247,9 +372,10 @@ struct BridgeServer::Impl {
                 advertised.emplace(name);
             }
         } else if (type == "event") {
-            string_member(object, "name", 128);
+            const auto name = string_member(object, "name", 128);
             auto* data = json_object_get_member(object, "data");
             if (!data || !JSON_NODE_HOLDS_OBJECT(data)) throw std::runtime_error("Expected event data object");
+            if (name == "frame_timing") sample = timing_sample(object, json_node_get_object(data));
         } else if (type == "command_received" || type == "command_completed" || type == "command_failed") {
             command_id = string_member(object, "command_id", 128);
             if (json_object_has_member(object, "result")) {
@@ -283,8 +409,21 @@ struct BridgeServer::Impl {
             return;
         }
         if ((type == "heartbeat" || type == "goodbye") && sequence <= incoming_sequence) return;
-        last_packet = Clock::now();
         const bool old_sequence = sequence_initialized && sequence <= incoming_sequence;
+        if (monitoring && !old_sequence) update_monitoring(monitoring->first, monitoring->second);
+        if (sample && !old_sequence) accept_sample(std::move(*sample));
+        if (type == "command_completed") {
+            const auto found = std::find_if(commands.begin(), commands.end(), [&](const Command& command) {
+                return command.id == command_id && command.session_id == session && command.name == "set_monitoring" && pending(command.state);
+            });
+            if (found != commands.end()) {
+                auto value = parse_object(result);
+                auto* values = json_node_get_object(value.get());
+                update_monitoring(boolean_member(values, "enabled"), unsigned_member(values, "epoch"));
+                if (command_id == monitoring_command) monitoring_confirmed_request = true;
+            }
+        }
+        last_packet = Clock::now();
         if (!sequence_initialized) {
             incoming_sequence = sequence;
             sequence_initialized = true;
@@ -292,8 +431,10 @@ struct BridgeServer::Impl {
             state.missing_events += sequence - incoming_sequence - 1;
             incoming_sequence = sequence;
         }
-        if (has_frame && !(type == "event" && old_sequence))
+        if (has_frame && !(type == "event" && old_sequence)) {
+            state.has_frame = true;
             state.frame = std::max(state.frame, frame);
+        }
         if (type == "event") {
             // Late and duplicate telemetry may be discarded; commands remain idempotent.
             if (!old_sequence) add_event(packet.get());
@@ -444,7 +585,9 @@ std::string BridgeServer::status_json() const {
     json_object_set_string_member(object, "session_id", state.session_id.c_str());
     json_object_set_string_member(object, "game_id", state.game_id.c_str());
     json_object_set_string_member(object, "error", state.error.c_str());
-    json_object_set_int_member(object, "frame", state.frame);
+    json_object_set_boolean_member(object, "has_frame", state.has_frame);
+    if (state.has_frame) json_object_set_int_member(object, "frame", state.frame);
+    else json_object_set_null_member(object, "frame");
     json_object_set_int_member(object, "received_events", state.received_events);
     json_object_set_int_member(object, "missing_events", state.missing_events);
     json_object_set_int_member(object, "malformed_packets", state.malformed_packets);
@@ -485,6 +628,12 @@ std::string BridgeServer::send_command(const std::string& name, const std::strin
     if (!names.contains(name)) throw std::runtime_error("Unknown bridge command: " + name);
     if (arguments_json.size() > packet_limit) throw std::runtime_error("Command arguments are too large");
     auto arguments = parse_object(arguments_json);
+    std::optional<bool> monitoring_request;
+    if (name == "set_monitoring") {
+        auto* values = json_node_get_object(arguments.get());
+        if (json_object_get_size(values) != 1) throw std::runtime_error("set_monitoring requires only enabled");
+        monitoring_request = boolean_member(values, "enabled");
+    }
     std::lock_guard lock(impl_->mutex);
     if (!impl_->state.connected) throw std::runtime_error("No runtime is connected to the bridge");
     if (!impl_->capabilities.contains(name)) throw std::runtime_error("Runtime capability unavailable: " + name);
@@ -517,6 +666,12 @@ std::string BridgeServer::send_command(const std::string& name, const std::strin
     command.packet = serialize(node.get());
     if (command.packet.size() > packet_limit) throw std::runtime_error("The command packet is too large");
     const auto response = impl_->command_json(command);
+    if (monitoring_request) {
+        impl_->monitoring_command = command.id;
+        impl_->monitoring_requested = monitoring_request;
+        impl_->monitoring_request_epoch = impl_->monitoring_epoch;
+        impl_->monitoring_confirmed_request = false;
+    }
     impl_->commands.push_back(std::move(command));
     return response;
 }
@@ -527,6 +682,186 @@ std::string BridgeServer::command_json(const std::string& command_id) const {
         [&](const auto& command) { return command.id == command_id; });
     if (found == impl_->commands.end()) throw std::runtime_error("Unknown bridge command ID");
     return impl_->command_json(*found);
+}
+
+MonitoringSnapshot BridgeServer::monitoring_snapshot() const {
+    MonitoringSnapshot snapshot;
+    bool baseline_known = false;
+    std::uint64_t packet_base = 0;
+    {
+        std::lock_guard lock(impl_->mutex);
+        snapshot.connected = impl_->state.connected;
+        snapshot.supported = impl_->capabilities.contains("set_monitoring");
+        snapshot.enabled = impl_->monitoring_enabled;
+        snapshot.monitoring_epoch = impl_->monitoring_epoch;
+        snapshot.session_id = impl_->state.session_id;
+        snapshot.game_id = impl_->state.game_id;
+        snapshot.error = impl_->state.error;
+        snapshot.command_id = impl_->monitoring_command;
+        snapshot.requested_enabled = impl_->monitoring_requested;
+        const auto command = std::find_if(impl_->commands.begin(), impl_->commands.end(), [&](const auto& value) {
+            return value.id == impl_->monitoring_command;
+        });
+        if (command != impl_->commands.end()) {
+            snapshot.command_status = command->state;
+            snapshot.pending = pending(command->state) && !impl_->monitoring_confirmed_request;
+            if (!command->error.empty()) snapshot.error = command->error;
+        }
+        snapshot.samples.assign(impl_->monitoring_samples.begin(), impl_->monitoring_samples.end());
+        snapshot.history_truncated = impl_->monitoring_truncated;
+        baseline_known = impl_->monitoring_baseline_known;
+        packet_base = impl_->monitoring_packet_base;
+        snapshot.stats.packet_gaps = impl_->state.missing_events - packet_base;
+        snapshot.stats.sender_dropped_samples = impl_->monitoring_drops;
+        if (!snapshot.samples.empty())
+            snapshot.age_ms = std::chrono::duration<double, std::milli>(Clock::now() - impl_->last_sample).count();
+    }
+    snapshot.has_frames = !snapshot.samples.empty();
+    snapshot.stale = snapshot.has_frames && (!snapshot.connected || !snapshot.enabled || *snapshot.age_ms >= 1000.0);
+    if (!snapshot.connected) snapshot.state = "disconnected";
+    else if (!snapshot.supported) snapshot.state = "unsupported";
+    else if (snapshot.pending) snapshot.state = "pending";
+    else if (!snapshot.enabled) snapshot.state = "disabled";
+    else if (!snapshot.has_frames) snapshot.state = "waiting";
+    else snapshot.state = snapshot.stale ? "stale" : "active";
+    if (!snapshot.has_frames) return snapshot;
+    snapshot.output_handle = snapshot.samples.back().output_handle;
+    snapshot.output_generation = snapshot.samples.back().output_generation;
+    auto& stats = snapshot.stats;
+    stats.window_end_us = snapshot.samples.back().timestamp_us;
+    stats.window_start_us = stats.window_end_us > monitoring_window_us ? stats.window_end_us - monitoring_window_us : 0;
+    const auto first = std::upper_bound(snapshot.samples.begin(), snapshot.samples.end(), stats.window_start_us,
+        [](std::uint64_t timestamp, const MonitoringSample& value) { return timestamp < value.timestamp_us; });
+    std::vector<std::uint64_t> intervals;
+    long double sum = 0;
+    for (auto iterator = first; iterator != snapshot.samples.end(); ++iterator) {
+        stats.missing_samples += iterator->missing_before;
+        if (!iterator->flip_interval_us) continue;
+        ++stats.observed_samples;
+        intervals.push_back(*iterator->flip_interval_us);
+        sum += *iterator->flip_interval_us;
+    }
+    stats.sample_count = intervals.size();
+    stats.expected_samples = stats.observed_samples + stats.missing_samples;
+    const bool crosses_unknown_gap = first != snapshot.samples.begin() && first != snapshot.samples.end() &&
+        first->missing_before && std::prev(first)->timestamp_us < stats.window_start_us;
+    const bool reliable = (first != snapshot.samples.begin() || baseline_known) && !crosses_unknown_gap;
+    if (stats.expected_samples && reliable)
+        stats.coverage = static_cast<double>(stats.observed_samples) / static_cast<double>(stats.expected_samples);
+    stats.complete = reliable && snapshot.samples.front().timestamp_us <= stats.window_start_us &&
+        stats.window_end_us - snapshot.samples.front().timestamp_us >= monitoring_window_us && !stats.missing_samples;
+    if (intervals.empty()) {
+        if (snapshot.state == "active") snapshot.state = "waiting_for_intervals";
+        return snapshot;
+    }
+    stats.mean_interval_us = static_cast<double>(sum / intervals.size());
+    if (sum > 0) stats.estimated_fps = static_cast<double>(intervals.size() * 1000000.0L / sum);
+    std::sort(intervals.begin(), intervals.end());
+    stats.p95_interval_us = static_cast<double>(intervals[(95 * intervals.size() + 99) / 100 - 1]);
+    stats.worst_interval_us = static_cast<double>(intervals.back());
+    return snapshot;
+}
+
+std::string BridgeServer::monitoring_snapshot_json(bool include_history) const {
+    const auto snapshot = monitoring_snapshot();
+    auto node = new_object();
+    auto* object = json_node_get_object(node.get());
+    for (const auto& [name, value] : std::initializer_list<std::pair<const char*, bool>>{
+        {"connected", snapshot.connected}, {"supported", snapshot.supported}, {"enabled", snapshot.enabled},
+        {"pending", snapshot.pending}, {"has_frames", snapshot.has_frames}, {"stale", snapshot.stale},
+        {"history_truncated", snapshot.history_truncated}}) json_object_set_boolean_member(object, name, value);
+    for (const auto& [name, value] : std::initializer_list<std::pair<const char*, std::string>>{
+        {"state", snapshot.state}, {"session_id", snapshot.session_id}, {"game_id", snapshot.game_id},
+        {"command_id", snapshot.command_id}, {"command_status", snapshot.command_status}, {"error", snapshot.error}})
+        json_object_set_string_member(object, name, value.c_str());
+    if (snapshot.requested_enabled) json_object_set_boolean_member(object, "requested_enabled", *snapshot.requested_enabled);
+    else json_object_set_null_member(object, "requested_enabled");
+    const auto number = [](JsonObject* target, const char* name, const std::optional<double>& value) {
+        if (value) json_object_set_double_member(target, name, *value);
+        else json_object_set_null_member(target, name);
+    };
+    number(object, "age_ms", snapshot.age_ms);
+    json_object_set_int_member(object, "monitoring_epoch", snapshot.monitoring_epoch);
+    auto* scope = json_object_new();
+    json_object_set_string_member(scope, "metric", "completed_main_videoout_flip_interval");
+    json_object_set_string_member(scope, "frame_semantics", "runtime_global_correlation_id_not_simulation_tick");
+    json_object_set_string_member(scope, "window", "last_1s_of_source_timestamps");
+    json_object_set_int_member(scope, "history_seconds", 60);
+    json_object_set_int_member(scope, "history_limit", monitoring_limit);
+    json_object_set_string_member(scope, "packet_gaps_semantics", "forward_sequence_gaps_including_reordered_and_nonmeasurement_packets");
+    if (snapshot.has_frames) {
+        json_object_set_int_member(scope, "output_handle", snapshot.output_handle);
+        json_object_set_int_member(scope, "output_generation", snapshot.output_generation);
+        json_object_set_int_member(scope, "monitoring_epoch", snapshot.samples.back().monitoring_epoch);
+    } else {
+        json_object_set_null_member(scope, "output_handle");
+        json_object_set_null_member(scope, "output_generation");
+        json_object_set_null_member(scope, "monitoring_epoch");
+    }
+    json_object_set_object_member(object, "scope", scope);
+    auto* units = json_object_new();
+    for (const auto* name : {"timestamp_us", "flip_interval_us", "mean_interval_us", "p95_interval_us", "worst_interval_us"})
+        json_object_set_string_member(units, name, "microseconds");
+    json_object_set_string_member(units, "estimated_fps", "flips_per_second");
+    json_object_set_string_member(units, "age_ms", "milliseconds_since_local_receipt");
+    json_object_set_string_member(units, "coverage", "observed_interval_samples_over_expected_samples");
+    json_object_set_object_member(object, "units", units);
+    auto* stats = json_object_new();
+    const auto& values = snapshot.stats;
+    for (const auto& [name, value] : std::initializer_list<std::pair<const char*, std::uint64_t>>{
+        {"sample_count", values.sample_count}, {"observed_samples", values.observed_samples}, {"expected_samples", values.expected_samples},
+        {"missing_samples", values.missing_samples}, {"sender_dropped_samples", values.sender_dropped_samples},
+        {"packet_gaps", values.packet_gaps}, {"window_start_us", values.window_start_us}, {"window_end_us", values.window_end_us}})
+        json_object_set_int_member(stats, name, value);
+    json_object_set_boolean_member(stats, "complete", values.complete);
+    number(stats, "coverage", values.coverage);
+    number(stats, "estimated_fps", values.estimated_fps);
+    number(stats, "mean_interval_us", values.mean_interval_us);
+    number(stats, "p95_interval_us", values.p95_interval_us);
+    number(stats, "worst_interval_us", values.worst_interval_us);
+    auto* loss_scope = json_object_new();
+    json_object_set_string_member(loss_scope, "packet_gaps", "monitoring_epoch");
+    json_object_set_string_member(loss_scope, "sender_dropped_samples", "monitoring_epoch");
+    json_object_set_string_member(loss_scope, "missing_samples", "source_window");
+    json_object_set_object_member(stats, "loss_scope", loss_scope);
+    json_object_set_object_member(object, "stats", stats);
+    const auto sample_node = [](const MonitoringSample& sample) {
+        auto* value = json_object_new();
+        for (const auto& [name, integer] : std::initializer_list<std::pair<const char*, std::uint64_t>>{
+            {"frame", sample.frame}, {"output_handle", sample.output_handle}, {"output_generation", sample.output_generation},
+            {"completed_flip_count", sample.completed_flip_count}, {"timestamp_us", sample.timestamp_us},
+            {"monitoring_epoch", sample.monitoring_epoch}, {"dropped_samples", sample.dropped_samples}, {"missing_before", sample.missing_before}})
+            json_object_set_int_member(value, name, integer);
+        if (sample.flip_interval_us) json_object_set_int_member(value, "flip_interval_us", *sample.flip_interval_us);
+        else json_object_set_null_member(value, "flip_interval_us");
+        return value;
+    };
+    const auto count = snapshot.samples.size();
+    if (count) json_object_set_object_member(object, "latest_frame", sample_node(snapshot.samples.back()));
+    else json_object_set_null_member(object, "latest_frame");
+    const auto worst = std::find_if(snapshot.samples.begin(), snapshot.samples.end(), [&](const auto& sample) {
+        return sample.timestamp_us > values.window_start_us && sample.flip_interval_us && values.worst_interval_us &&
+            static_cast<double>(*sample.flip_interval_us) == *values.worst_interval_us;
+    });
+    if (worst != snapshot.samples.end()) json_object_set_object_member(object, "worst_frame", sample_node(*worst));
+    else json_object_set_null_member(object, "worst_frame");
+    if (include_history) {
+        auto* frames = json_array_new();
+        for (std::size_t index = count > 20 ? count - 20 : 0; index < count; ++index)
+            json_array_add_object_element(frames, sample_node(snapshot.samples[index]));
+        json_object_set_array_member(object, "frames", frames);
+        auto* chart = json_array_new();
+        const auto chart_count = std::min<std::size_t>(count, 600);
+        for (std::size_t index = 0; index < chart_count; ++index) {
+            const auto selected = chart_count < 2 ? 0 : index * (count - 1) / (chart_count - 1);
+            json_array_add_object_element(chart, sample_node(snapshot.samples[selected]));
+        }
+        json_object_set_array_member(object, "chart_samples", chart);
+        json_object_set_boolean_member(object, "chart_downsampled", count > chart_count);
+    }
+    json_object_set_int_member(object, "history_sample_count", count);
+    json_object_set_boolean_member(object, "history_included", include_history);
+    return serialize(node.get());
 }
 
 } // namespace framerift

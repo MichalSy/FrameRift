@@ -177,6 +177,7 @@ void receive_chunk(SoupServerMessage* message, GBytes* chunk, gpointer) noexcept
 
 constexpr const char* tool_list = R"json({"tools":[
  {"name":"get_bridge_status","description":"Get the UDP bridge connection, current session and advertised runtime capabilities.","inputSchema":{"type":"object","additionalProperties":false},"annotations":{"readOnlyHint":true,"openWorldHint":false}},
+ {"name":"get_monitoring_snapshot","description":"Read normalized main VideoOut flip timings, confirmed monitoring state, freshness, sample coverage and latest/worst frames. Statistics use the last source-time second; FPS is estimated from observed intervals. Set include_history for a bounded chart and recent frames; stale history is retained.","inputSchema":{"type":"object","properties":{"include_history":{"type":"boolean","default":false}},"additionalProperties":false},"annotations":{"readOnlyHint":true,"openWorldHint":false}},
  {"name":"get_events","description":"Read buffered runtime events after a FrameRift event cursor. Returns immediately; does not wait for new events.","inputSchema":{"type":"object","properties":{"after":{"type":"integer","minimum":0,"maximum":9223372036854775807},"limit":{"type":"integer","minimum":1,"maximum":100}},"additionalProperties":false},"annotations":{"readOnlyHint":true,"openWorldHint":false}},
  {"name":"send_command","description":"Send an asynchronous command supported by the connected runtime. Returns a command ID and local send status; delivery and execution require later runtime events. Put command-specific parameters in args.","inputSchema":{"type":"object","properties":{"name":{"type":"string","minLength":1,"maxLength":128},"args":{"type":"object"}},"required":["name","args"],"additionalProperties":false},"annotations":{"readOnlyHint":false,"destructiveHint":true,"idempotentHint":false,"openWorldHint":false}},
  {"name":"get_command","description":"Get the latest received status of a previously sent command by its command ID.","inputSchema":{"type":"object","properties":{"command_id":{"type":"string","minLength":1,"maxLength":128}},"required":["command_id"],"additionalProperties":false},"annotations":{"readOnlyHint":true,"openWorldHint":false}}
@@ -368,6 +369,15 @@ struct McpServer::Impl {
             if (!std::strcmp(name, "get_bridge_status")) {
                 if (!only_members(arguments, {})) throw InvalidParams("get_bridge_status takes no arguments.");
                 result = bridge.status_json();
+            } else if (!std::strcmp(name, "get_monitoring_snapshot")) {
+                if (!only_members(arguments, {"include_history"})) throw InvalidParams("Unknown monitoring argument.");
+                bool include_history = false;
+                if (auto* node = json_object_get_member(arguments, "include_history")) {
+                    if (!JSON_NODE_HOLDS_VALUE(node) || json_node_get_value_type(node) != G_TYPE_BOOLEAN)
+                        throw InvalidParams("include_history must be a boolean.");
+                    include_history = json_node_get_boolean(node);
+                }
+                result = bridge.monitoring_snapshot_json(include_history);
             } else if (!std::strcmp(name, "get_events")) {
                 if (!only_members(arguments, {"after", "limit"})) throw InvalidParams("Unknown event argument.");
                 std::uint64_t after = 0;

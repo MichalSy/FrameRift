@@ -7,17 +7,17 @@ Additional attribution terms: see NOTICE in the repository root.
 
 # Profiler workspace and game input scripts
 
-This is a design and proposed integration contract. FrameRift currently has a console, game lifecycle tools and the receiving/command side of the bridge. AnyPS5 has an optional connection-only adapter; structured measurements, captures and saved input scripts are not implemented. This design does not add those capabilities. The reference images use example values, not measured gameplay.
+This document combines the implemented frame-pacing dashboard with the remaining design and proposed integration contracts. FrameRift has Live/Logs views, game lifecycle tools and a UDP/MCP bridge; a bridge-enabled AnyPS5 build supports independent frame monitoring. Detailed CPU/GPU measurements, saved captures and input scripts remain planned. The reference images use example values, not measured gameplay.
 
 ## Workspace
 
-The Profiler retains the current FrameRift header and selected game's metadata title. A session strip distinguishes process state, bridge connection and monitoring state. The workspace has four tabs: **Live**, **Captures**, **Input scripts** and **Logs**. The game continues in its existing external window; this layout does not depend on embedded rendering.
+The Profiler retains the current FrameRift header and selected game's metadata title. A session strip distinguishes process state, bridge connection and monitoring state. The target workspace has four tabs: **Live**, **Captures**, **Input scripts** and **Logs**. The game continues in its existing external window; this layout does not depend on embedded rendering.
 
-The current implementation priority is monitoring. The first increment uses **Live** and **Logs** only; add **Captures** when capture actions work. Input-script editing, execution and the script sidebar in the reference image are deferred. Use the freed sidebar width for frame details and the chart.
+The implemented first increment uses **Live** and **Logs** only; add **Captures** when capture actions work. Input-script editing, execution and the script sidebar in the reference image are deferred. The available width serves frame details and the chart.
 
 ![Live profiler design](../assets/design/profiler-live-v2.png)
 
-The Live view has a one-second overview, a selected-frame detail pane, top-consumer tables, a recent flip-interval chart, and a compact script/capture pane. The script selector offers **Run script** and **Edit script** for the current game. Logs remain a separate full console with a small recent-output strip in the Live view.
+The target Live view adds top-consumer tables and a compact script/capture pane to the implemented one-second overview, selected-frame details and flip-interval chart. The proposed script selector offers **Run script** and **Edit script** for the current game. Logs remain a separate full console; a small recent-output strip in Live is also proposed.
 
 At smaller widths, the script/capture pane collapses into its corresponding tab. Tables retain their labels and units; the view scrolls rather than shrinking text. Session controls remain visible. Charts use quiet lines and explicit missing-data markers, not continuously animated backgrounds.
 
@@ -142,11 +142,11 @@ These tools are not yet implemented. UI and MCP will use the same library defini
 | `get_input_run` | `run_id` | Observed execution state, freshness, resolved/applied frames and capture references |
 | `cancel_input_run` | `run_id` | Asynchronous cancellation command and observed state |
 
-Requiring the revision prevents an AI from executing a definition changed since listing. Omitting the MCP `start` override uses the saved definition's optional start; if neither supplies one, execution is immediate. An explicit `{"mode":"immediate"}` override can run a normally scheduled script spontaneously. MCP does not accept executable paths or arbitrary code. Starting/stopping games and reading recent logs continue through the existing tools. Monitoring initially uses structured bridge events; a later normalized snapshot endpoint can share the UI's data model once that model is implemented.
+Requiring the revision prevents an AI from executing a definition changed since listing. Omitting the MCP `start` override uses the saved definition's optional start; if neither supplies one, execution is immediate. An explicit `{"mode":"immediate"}` override can run a normally scheduled script spontaneously. MCP does not accept executable paths or arbitrary code. Starting/stopping games and reading recent logs continue through the existing tools. The implemented `get_monitoring_snapshot` tool already shares the Live UI's normalized data model.
 
 ## Integration order and verification
 
-Start with one complete path from a successful AnyPS5 flip to genuine FrameRift FPS and interval values. A connected adapter currently sends no measurement events and advertises no command capabilities. Building the full mockup before this path exists would leave the dashboard without usable data.
+The first increment connects successful AnyPS5 flips to genuine FrameRift FPS and interval values. The optional adapter advertises `set_monitoring` and emits `frame_timing` events when activated. Connection-only builds remain compatible and expose unavailable monitoring. The later increments below extend this working data path.
 
 | Increment | Deliverable | Completion evidence |
 | --- | --- | --- |
@@ -175,7 +175,7 @@ Current measurement semantics and source references are in [Profiling and frame 
 
 ### Local source anchors
 
-The modified AnyPS5 checkout was inspected read-only for this measurement proposal. Relevant paths below are relative to that checkout, not files added to FrameRift. They describe existing instrumentation and possible hook locations, not implemented measurement/capture capabilities in the connection-only adapter.
+Relevant paths below are relative to the modified AnyPS5 checkout. The flip-completion hook and independent bridge collector implement the first increment; the remaining instrumentation provides source anchors for future CPU/GPU and capture work.
 
 | Concern | Source anchor |
 | --- | --- |

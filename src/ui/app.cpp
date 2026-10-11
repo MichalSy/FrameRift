@@ -173,7 +173,10 @@ private:
         gtk_window_set_child(GTK_WINDOW(window_), pages_);
         gtk_window_set_titlebar(GTK_WINDOW(window_), header());
         gtk_stack_add_named(GTK_STACK(pages_), library_view(), "library");
-        if (!profiler_) profiler_ = std::make_unique<ProfilerView>();
+        if (!profiler_) profiler_ = std::make_unique<ProfilerView>([this](bool enabled) {
+            if (!bridge_) throw std::runtime_error("The game bridge is unavailable");
+            bridge_->send_command("set_monitoring", enabled ? "{\"enabled\":true}" : "{\"enabled\":false}");
+        });
         gtk_stack_add_named(GTK_STACK(pages_), profiler_->widget(), "profiler");
         start_servers();
         show_page("library");
@@ -295,6 +298,11 @@ private:
             else gtk_widget_remove_css_class(bridge_indicator_, "connected");
         }
         if (profiler_) profiler_->bridge_status(status, mcp_ ? mcp_->endpoint() : "", server_error_);
+        const auto now = g_get_monotonic_time();
+        if (profiler_ && now - monitoring_updated_ >= G_USEC_PER_SEC) {
+            profiler_->monitoring(bridge_ ? bridge_->monitoring_snapshot() : MonitoringSnapshot{});
+            monitoring_updated_ = now;
+        }
     }
 
     GtkWidget* navigation_tab(const char* title, const char* page) {
@@ -936,6 +944,7 @@ private:
     std::unique_ptr<GameSession> game_session_;
     std::unique_ptr<McpServer> mcp_;
     guint bridge_source_ = 0;
+    gint64 monitoring_updated_ = 0;
     GtkWidget* bridge_indicator_ = nullptr;
     std::string server_error_;
     GtkWidget* refresh_ = nullptr;

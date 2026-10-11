@@ -49,7 +49,7 @@ button { box-shadow: none; text-shadow: none; }
 .window-buttons button > image { min-width: 16px; min-height: 16px; padding: 0; margin: 0; border: none; border-radius: 0; background: none; box-shadow: none; -gtk-icon-shadow: none; }
 .window-buttons button:hover { background: rgba(255,255,255,.1); }
 .window-buttons button.close:hover { background: #c73d50; }
-.profiler-page { padding: 32px 48px 40px; background: #0b161e; }
+.profiler-page { padding: 22px 32px 26px; background: #0b161e; }
 .profiler-title { font-size: 28px; font-weight: 700; }
 .profiler-status { color: #9aeeff; font-size: 13px; padding: 7px 13px; border-radius: 16px; background: #122c3a; }
 .bridge-indicator { color: #91a7b7; font-size: 12px; padding: 6px 12px; border-radius: 14px; background: #122c3a; }
@@ -60,3 +60,27 @@ button { box-shadow: none; text-shadow: none; }
 .console-frame { border: 1px solid #2c4455; border-radius: 7px; background: #08121a; }
 .profiler-console { padding: 14px 16px; }
 .console-empty { color: #8fa8ba; font-size: 15px; }
+.monitor-session-strip { padding: 10px 14px; background: #101f2a; border: 1px solid #29414f; border-radius: 6px; }
+.monitoring-state { font-size: 12px; color: #97adbd; }
+.monitoring-state.active { color: #8adbb3; }
+.monitoring-state.pending { color: #ffd078; }
+.monitor-control-label { font-size: 13px; color: #ccdce7; }
+.monitor-connection-details { color: #91a7b7; font-size: 12px; }
+.monitor-connection-details box { padding: 8px 14px; }
+.profiler-tabs button { background: #102330; border: 1px solid #294656; border-radius: 4px; min-height: 28px; padding: 4px 22px; color: #b2c6d5; }
+.profiler-tabs button:checked { background: #123343; color: #a2f5ff; border-color: #00bdd5; }
+.monitor-window { color: #b6cad8; font-size: 13px; font-weight: 600; }
+.monitor-freshness, .monitor-coverage { color: #94adbf; font-size: 12px; }
+.metric-cards > flowboxchild, .frame-fields > flowboxchild { padding: 0; border: none; background: transparent; }
+.metric-card { padding: 10px 18px; border: 1px solid #2b4658; border-radius: 6px; background: linear-gradient(115deg, #102735, #0d202c); }
+.metric-label { color: #adc5d6; font-size: 13px; }
+.metric-value { color: #edf6fc; font-size: 27px; font-weight: 700; }
+.metric-primary { color: #00dbed; }
+.metric-scope { color: #7f9eb3; font-size: 11px; }
+.metric-value.stale, .monitor-freshness.stale { color: #b8a47c; }
+.monitor-panel { padding: 12px 18px; border: 1px solid #294656; border-radius: 6px; background: #0e202c; }
+.monitor-heading { font-size: 17px; font-weight: 600; color: #e6f0f7; }
+.frame-picker { font-size: 12px; }
+.frame-picker > button { background: #122c3b; border: 1px solid #345568; border-radius: 4px; padding: 5px 12px; }
+.frame-value { font-size: 19px; font-weight: 600; color: #f0f6fa; }
+.monitor-frame-scope, .monitor-chart-hint { font-size: 11px; color: #8fa8bc; }

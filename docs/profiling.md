@@ -7,9 +7,11 @@ Additional attribution terms: see NOTICE in the repository root.
 
 # Profiling and frame analysis
 
-The Profiler tab shows live console output and the status of an externally launched game. Its output-only VTE terminal receives merged stdout/stderr directly, interprets terminal colors and progress updates, and retains 5000 scrollback lines. The runtime also writes the complete raw session log at `<framerift-data-root>/logs/<game-id>/<session-id>/game.log`; display-only LF-to-CRLF normalization leaves that file unchanged. There is no shell, PTY or file polling. Disable Follow output and scroll up to inspect earlier output; the Copy button, Ctrl+C or Ctrl+Shift+C copies selected text. Logs remain visible after process exit and the terminal clears for the next session.
+The Profiler has **Live** and **Logs** views for an externally launched game. The Logs view's output-only VTE terminal receives merged stdout/stderr directly, interprets terminal colors and progress updates, and retains 5000 scrollback lines. The runtime also writes the complete raw session log at `<framerift-data-root>/logs/<game-id>/<session-id>/game.log`; display-only LF-to-CRLF normalization leaves that file unchanged. There is no shell, PTY or file polling. Disable Follow output and scroll up to inspect earlier output; the Copy button, Ctrl+C or Ctrl+Shift+C copies selected text. Logs remain visible after process exit and the terminal clears for the next session.
 
-FrameRift also implements a [UDP debug bridge and MCP server](debug-bridge.md). The Profiler shows the actual connection, server addresses, current reported frame and event/packet-gap counters. Events are buffered in memory and available through MCP. Timing charts, frame analysis and the AnyPS5 event producer remain planned; existing console logs continue independently.
+The Live view uses the [UDP debug bridge and MCP server](debug-bridge.md). Turn **Monitoring** on to receive successful main-output flip summaries from a bridge-enabled AnyPS5 build. The dashboard updates once per second with estimated FPS, mean/P95/worst flip interval, sample coverage, latest/worst frame details and a bounded 60-second history. Selecting a chart point preserves that frame until Follow live is resumed. Collection continues across tab changes; stop/disconnect retains the last observation with an explicit inactive/stale state.
+
+The same normalized model is available through `get_monitoring_snapshot`. Game-side monotonic timestamps determine intervals and source windows; UDP receive age determines freshness. The first completion after activation or output reset has no interval. Per-stream completion IDs identify missing samples separately from general packet gaps and producer drops. The dashboard does not acknowledge telemetry, parse timing files or enable existing timing/draw/GPU log settings. CPU hotspots, GPU/memory tables, saved snapshots and screenshots remain later increments.
 
 Confirmed AnyPS5 details refer to [upstream `197ffac97203d715a258a28b432fa2eedbf8be6f`](https://github.com/boykopovar/AnyPS5/tree/197ffac97203d715a258a28b432fa2eedbf8be6f). This source snapshot is not a FrameRift runtime benchmark. See [AnyPS5 integration](anyps5-integration.md), [Controller and input](controller-input.md) and the [project overview](../README.md).
 
@@ -26,7 +28,7 @@ AnyPS5 already contains instrumentation. FrameRift must distinguish displaying e
 
 Both profiling variables are checked for **presence** in the examined paths. A variable set to `0` remains present. FrameRift should remove the variable when disabling profiling rather than setting it to the string `0`. Sources: [Build option](https://github.com/boykopovar/AnyPS5/blob/197ffac97203d715a258a28b432fa2eedbf8be6f/CMakeLists.txt#L26), [Draw activation](https://github.com/boykopovar/AnyPS5/blob/197ffac97203d715a258a28b432fa2eedbf8be6f/core/libs/prx/libSceAgcDriver/Graphics/src/Recorder.cpp#L38), [GPU activation](https://github.com/boykopovar/AnyPS5/blob/197ffac97203d715a258a28b432fa2eedbf8be6f/core/libs/prx/libSceAgcDriver/Graphics/src/Recorder.cpp#L1790).
 
-The code's presence does not prove that every distributed runtime library set includes frame timing. The planned UI must detect the capabilities of a specific session and mark missing measurement sources as unavailable.
+The code's presence does not prove that every distributed runtime library set includes frame timing. The Live UI checks the session's monitoring capability and marks missing measurements as unavailable.
 
 ## Existing frame-timing format
 
@@ -48,7 +50,7 @@ The present loop determines the interval between consecutive flip completions an
 
 The record contains `endpoint=flip_complete` and `display_confirmed=0`. This is an explicit limit: the measurement does not confirm when the image appeared on the monitor. FrameRift should initially display **flip interval** and **estimated flip rate**, with the measurement point explained in a tooltip or details. Source: [Endpoint labeling](https://github.com/boykopovar/AnyPS5/blob/197ffac97203d715a258a28b432fa2eedbf8be6f/core/libs/prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp#L159).
 
-For a valid positive interval, a simple derived rate is `1000 / flip_interval_ms`. A rate over a time window is more useful for an overview: divide the number of valid intervals by their total duration. These are planned FrameRift calculations. They do not automatically measure new game images, actual monitor FPS, display latency or input-to-image latency.
+For a valid positive interval, a simple derived rate is `1000 / flip_interval_ms`. The dashboard overview divides the number of received valid intervals by their total duration over the last source second. P95 uses the nearest-rank percentile. Sample coverage accompanies these values; a partial observation is not a complete benchmark. These calculations do not measure new game images, actual monitor FPS, display latency or input-to-image latency.
 
 Missing intervals, a session's first frame, incomplete data and discarded measurements should remain visible as gaps. A missing value must not appear as `0 ms` or infinite FPS. Repeated presentations and multiple output handles need separate evaluation.
 
@@ -113,7 +115,7 @@ Existing output paths have different overload policies:
 
 Sources: [Timing queue](https://github.com/boykopovar/AnyPS5/blob/197ffac97203d715a258a28b432fa2eedbf8be6f/core/libs/prx/libSceVideoOut/include/FrameTimingLog.hpp#L36), [Timing error handling](https://github.com/boykopovar/AnyPS5/blob/197ffac97203d715a258a28b432fa2eedbf8be6f/core/libs/prx/libSceVideoOut/src/VideoOutDriver.cpp#L619), [ProfileOutput](https://github.com/boykopovar/AnyPS5/blob/197ffac97203d715a258a28b432fa2eedbf8be6f/core/libs/prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp#L41).
 
-The planned IPC connection should use a bounded producer buffer with visible drop counters. A slow or closed launcher must not block the game indefinitely. Data formatting and UI updates should stay outside hot rendering and driver paths. Detailed measurements should be enabled deliberately; the library view does not require permanent GPU instrumentation.
+The optional bridge uses a bounded producer buffer with visible drop counters. A full buffer drops samples; UDP transmission never waits for receipt. Data formatting and UI updates happen outside hot rendering and driver paths. Detailed CPU/GPU measurements remain future work and should be enabled deliberately.
 
 ## Open experiments and later validation
 

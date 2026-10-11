@@ -9,7 +9,7 @@ Additional attribution terms: see NOTICE in the repository root.
 
 FrameRift is a separate native application with a game library, Linux conversion/launch and a Profiler console. Windows launch remains unverified. Game execution stays in the native program converted by AnyPS5.
 
-Linux conversion and launch use the [modified AnyPS5 fork](https://github.com/MichalSy/AnyPS5), with a separate game window and Profiler console. Window embedding and structured measurements remain planned. Confirmed upstream details below refer to the pinned [snapshot `197ffac97203d715a258a28b432fa2eedbf8be6f`](https://github.com/boykopovar/AnyPS5/tree/197ffac97203d715a258a28b432fa2eedbf8be6f). Later upstream changes require separate review. Stock upstream AnyPS5 is not a supported substitute for the modified fork.
+Linux conversion and launch use the [modified AnyPS5 fork](https://github.com/MichalSy/AnyPS5), with a separate game window and Profiler Live/Logs views. An optional bridge build supplies frame-pacing measurements independently of timing-file logging. Window embedding and detailed CPU/GPU collectors remain planned. Confirmed upstream details below refer to the pinned [snapshot `197ffac97203d715a258a28b432fa2eedbf8be6f`](https://github.com/boykopovar/AnyPS5/tree/197ffac97203d715a258a28b432fa2eedbf8be6f). Later upstream changes require separate review. Stock upstream AnyPS5 is not a supported substitute for the modified fork.
 
 See also [Profiling](profiling.md), [Controller and input](controller-input.md) and the [project overview](../README.md).
 
@@ -42,7 +42,7 @@ flowchart LR
     end
     game --> logs["Existing logs and timing file"]
     logs --> ui
-    game -. "Planned structured telemetry" .-> ui
+    game -->|"Optional UDP frame telemetry"| ui
 ```
 
 FrameRift does not load the game into its GUI process or render the game's Vulkan output through the library view. Native window embedding could change the visible arrangement while preserving the process boundary. Internal communication and window integration are separate interfaces. Timing-file ingestion in the diagram remains planned.

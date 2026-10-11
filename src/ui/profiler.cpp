@@ -72,13 +72,14 @@ std::uint64_t chart_end(const MonitoringSnapshot& snapshot) {
 }
 
 double chart_maximum(const MonitoringSnapshot& snapshot, bool fps) {
+    if (fps) return 75.0;
     double maximum = 0;
     const auto end = chart_end(snapshot);
     for (std::size_t i = 0; i < snapshot.samples.size(); ++i) {
         if (end - snapshot.samples[i].timestamp_us > 60000000) continue;
         if (const auto value = chart_value(snapshot, i, fps)) maximum = std::max(maximum, *value);
     }
-    return fps ? std::max(90.0, std::ceil(maximum / 30.0) * 30.0) : std::max(25.0, std::ceil(maximum / 10.0) * 10.0);
+    return std::max(25.0, std::ceil(maximum / 10.0) * 10.0);
 }
 
 } // namespace
@@ -102,10 +103,14 @@ ProfilerView::ProfilerView(std::function<void(bool)> request_monitoring)
     gtk_box_append(GTK_BOX(header), status_);
     bridge_connection_ = label("Disconnected", "bridge-connection");
     gtk_box_append(GTK_BOX(header), bridge_connection_);
-    auto* tabs = gtk_stack_switcher_new();
-    gtk_stack_switcher_set_stack(GTK_STACK_SWITCHER(tabs), GTK_STACK(workspace));
-    gtk_widget_add_css_class(tabs, "profiler-tabs");
-    gtk_box_append(GTK_BOX(header), tabs);
+    const auto tabs = ui::segmented_control("Live", "Logs");
+    g_signal_connect_object(tabs.first, "toggled", G_CALLBACK(+[](GtkToggleButton* button, gpointer data) {
+        if (gtk_toggle_button_get_active(button)) gtk_stack_set_visible_child_name(GTK_STACK(data), "live");
+    }), workspace, G_CONNECT_DEFAULT);
+    g_signal_connect_object(tabs.second, "toggled", G_CALLBACK(+[](GtkToggleButton* button, gpointer data) {
+        if (gtk_toggle_button_get_active(button)) gtk_stack_set_visible_child_name(GTK_STACK(data), "logs");
+    }), workspace, G_CONNECT_DEFAULT);
+    gtk_box_append(GTK_BOX(header), tabs.root);
     monitoring_toggle_ = gtk_check_button_new_with_label("Monitoring");
     gtk_widget_set_sensitive(monitoring_toggle_, false);
     g_signal_connect(monitoring_toggle_, "toggled", G_CALLBACK(+[](GtkCheckButton* button, gpointer data) {
@@ -226,7 +231,7 @@ ProfilerView::ProfilerView(std::function<void(bool)> request_monitoring)
     chart_header_ = chart_header;
     gtk_widget_add_css_class(chart_header, "chart-header-overlay");
     chart_ = gtk_drawing_area_new();
-    gtk_drawing_area_set_content_height(GTK_DRAWING_AREA(chart_), 240);
+    gtk_drawing_area_set_content_height(GTK_DRAWING_AREA(chart_), 190);
     gtk_widget_set_hexpand(chart_, true);
     gtk_widget_set_tooltip_text(chart_, "FPS counts completed flips in the preceding source second. Click a sample to inspect. Missing samples are not interpolated.");
     gtk_drawing_area_set_draw_func(GTK_DRAWING_AREA(chart_), +[](GtkDrawingArea*, cairo_t* context, int width, int height, gpointer data) {
@@ -788,7 +793,7 @@ void ProfilerView::draw_chart(cairo_t* context, int width, int height) noexcept 
         const double maximum = chart_maximum(monitoring_, chart_fps_);
         cairo_select_font_face(context, "Sans", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_NORMAL);
         cairo_set_font_size(context, 12);
-        const unsigned ticks = chart_fps_ ? 3 : 4;
+        const unsigned ticks = chart_fps_ ? 5 : 4;
         for (unsigned tick = 0; tick <= ticks; ++tick) {
             const double y = chart_top + plot_height * tick / ticks;
             cairo_set_source_rgb(context, 0.14, 0.24, 0.30);

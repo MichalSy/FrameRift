@@ -23,6 +23,8 @@ The current layout was checked in an isolated GTK window using the actual Profil
 
 ![Narrow native fixture: flip interval and unchecked controls](../assets/screenshots/profiler-controls-narrow.png)
 
+![Logs selection using the same segmented control](../assets/screenshots/profiler-logs-control.png)
+
 ![Narrow native fixture: scrolled resources](../assets/screenshots/profiler-controls-resources.png)
 
 ## Visual direction
@@ -33,7 +35,9 @@ Cards use 16 px internal padding and 16 px section/column gaps. Shader work and 
 
 ## Verification
 
-The revised controls were inspected at 1500 × 1150 and 1100 × 850. Both mode captions remain readable with a ten-digit frame ID and a three-digit worst interval. Native toggling confirms mutual exclusion and redraw in both modes. Follow live and Monitoring were checked on and off; the indicator allocation is 16 × 16 without inherited theme padding. Disabled controls remain distinct from enabled options. Narrow layouts stack the resource column; scrolling exposes the complete shader/memory cards without horizontal overflow. All dashboard card containers share one factory and CSS class, 16 px padding/gaps and 4 px corners. Theme-independent button foregrounds are explicit.
+Live/Logs reuses the chart segmented control. Native mouse clicks verify switching to Logs and returning to Live while preserving chart mode. The chart drawing area is 190 px high and the FPS axis is fixed at 0–75 with 15-FPS ticks; interval mode still scales automatically.
+
+The revised controls were inspected at 1500 × 1050 and 1100 × 850. Both mode captions remain readable with a ten-digit frame ID and a three-digit worst interval. Native toggling confirms mutual exclusion and redraw in both modes. Follow live and Monitoring were checked on and off; the indicator allocation is 16 × 16 without inherited theme padding. Disabled controls remain distinct from enabled options. Narrow layouts stack the resource column; scrolling exposes the complete shader/memory cards without horizontal overflow. All dashboard card containers share one factory and CSS class, 16 px padding/gaps and 4 px corners. Theme-independent button foregrounds are explicit.
 
 - Native shell check: connection status remains beside Profiler on both pages; search and refresh are visible in Library and hidden in Profiler. Branding, Settings and window controls keep the shared shell styling.
 - Native build succeeds (`cmake --build build -j2`); the previous workspace implementation also passed a full clean build.

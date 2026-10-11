@@ -9,6 +9,8 @@ Additional attribution terms: see NOTICE in the repository root.
 
 - Read Atlas Start through Proxy MCP: `06b0f012-18a4-44a5-bfcc-64e29d4632d3`; search Atlas for existing project knowledge.
 - Re-read these bullets before implementing a new slice.
+- Commit completed task changes before finishing; never discard unrelated user changes to make Git clean.
+- For local development, keep the desktop launcher pointed at this checkout's `build/framerift`; do not install a duplicate executable.
 - Keep it simple: implement the current need, with no scaffolding for future features.
 - Write code, identifiers, comments and UI text in English.
 - Keep data and behavior in their domain; reuse existing code before adding a file or abstraction.

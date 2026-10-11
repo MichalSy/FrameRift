@@ -85,14 +85,9 @@ button { box-shadow: none; text-shadow: none; }
 .monitor-heading { font-size: 17px; font-weight: 600; color: #edf4fa; }
 .frame-value { font-size: 12px; color: #e1edf6; font-feature-settings: "tnum"; }
 .resource-row > flowboxchild { padding: 0; border: none; background: transparent; }
-.consumer-pending { font-size: 11px; color: #ffc75b; }
-.consumer-cell { font-size: 13px; }
-.consumer-row { padding: 8px 0; border-bottom: 1px solid #345366; }
-.consumer-row.consumer-column { padding-top: 0; }
+.consumer-empty { font-size: 13px; color: #a8c0d2; }
 .consumer-column { color: #a8c0d2; }
 .numeric, .resource-value { font-feature-settings: "tnum"; }
-.consumer-bar trough { min-height: 14px; border: none; border-radius: 4px; background: #203b4f; }
-.consumer-bar progress { min-width: 0; margin: 0; padding: 0; min-height: 14px; border: none; border-radius: 4px; background: #24d4eb; }
 .work-cell { font-size: 13px; padding: 8px 0; border-bottom: 1px solid #345366; }
 .resource-label { font-size: 13px; color: #d4e2ec; }
 .resource-value { font-size: 13px; color: #edf4fa; }

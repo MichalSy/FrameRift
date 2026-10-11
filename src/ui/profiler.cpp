@@ -264,53 +264,22 @@ ProfilerView::ProfilerView(std::function<void(bool)> request_monitoring)
     gtk_widget_set_size_request(consumers, 850, -1);
     gtk_widget_set_hexpand(consumers, true);
     gtk_widget_set_valign(consumers, GTK_ALIGN_START);
-    auto* consumer_header = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 16);
+    auto* consumer_header = gtk_center_box_new();
     auto* consumer_title = label("Top frame consumers", "monitor-heading");
-    gtk_widget_set_hexpand(consumer_title, true);
-    gtk_box_append(GTK_BOX(consumer_header), consumer_title);
+    gtk_center_box_set_start_widget(GTK_CENTER_BOX(consumer_header), consumer_title);
     const auto consumer_modes = ui::segmented_control("Frame", "Driver CPU", "GPU");
     gtk_widget_set_sensitive(consumer_modes.second, false);
     gtk_widget_set_sensitive(consumer_modes.third, false);
     gtk_widget_set_tooltip_text(consumer_modes.root, "Per-frame CPU/GPU attribution is not available yet");
-    gtk_box_append(GTK_BOX(consumer_header), consumer_modes.root);
+    gtk_center_box_set_end_widget(GTK_CENTER_BOX(consumer_header), consumer_modes.root);
     consumer_frame_ = label("Frame –", "frame-value");
     gtk_label_set_ellipsize(GTK_LABEL(consumer_frame_), PANGO_ELLIPSIZE_END);
-    gtk_box_append(GTK_BOX(consumer_header), consumer_frame_);
-    auto* pending = label("Measurements pending", "consumer-pending");
-    gtk_label_set_ellipsize(GTK_LABEL(pending), PANGO_ELLIPSIZE_END);
-    gtk_label_set_xalign(GTK_LABEL(pending), 1);
-    gtk_widget_set_tooltip_text(pending, "Per-frame phase attribution is not supplied by this runtime. Placeholder rows do not represent measured rankings.");
-    gtk_box_append(GTK_BOX(consumer_header), pending);
+    gtk_center_box_set_center_widget(GTK_CENTER_BOX(consumer_header), consumer_frame_);
     gtk_box_append(GTK_BOX(consumers), consumer_header);
-    auto* table = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
-    const char* headings[] = {"Phase", "", "Elapsed", "Calls", "Share of flip"};
-    const char* phases[] = {"Packet decode", "Texture upload", "Pipeline preparation", "Descriptor update", "Command recording",
-        "Buffer synchronization", "Render-target setup", "Shader specialization", "Draw submission", "Present preparation"};
-    const int widths[] = {205, 140, 90, 64, 100};
-    for (unsigned row = 0; row <= 10; ++row) {
-        auto* line = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 16);
-        gtk_widget_add_css_class(line, "consumer-row");
-        if (!row) gtk_widget_add_css_class(line, "consumer-column");
-        for (unsigned col = 0; col < 5; ++col) {
-            GtkWidget* cell;
-            if (row && col == 1) {
-                cell = gtk_progress_bar_new();
-                gtk_widget_add_css_class(cell, "consumer-bar");
-            } else {
-                cell = label(row ? (col == 0 ? phases[row - 1] : "–") : headings[col], "consumer-cell");
-                if (col > 1) {
-                    gtk_label_set_xalign(GTK_LABEL(cell), 1);
-                    gtk_widget_add_css_class(cell, "numeric");
-                }
-            }
-            gtk_widget_set_size_request(cell, widths[col], -1);
-            gtk_widget_set_hexpand(cell, col == 1);
-            gtk_widget_set_valign(cell, GTK_ALIGN_CENTER);
-            gtk_box_append(GTK_BOX(line), cell);
-        }
-        gtk_box_append(GTK_BOX(table), line);
-    }
-    gtk_box_append(GTK_BOX(consumers), table);
+    auto* empty = label("No data", "consumer-empty");
+    gtk_label_set_xalign(GTK_LABEL(empty), 0.5f);
+    gtk_widget_set_size_request(empty, -1, 340);
+    gtk_box_append(GTK_BOX(consumers), empty);
     gtk_flow_box_insert(GTK_FLOW_BOX(lower), consumers, -1);
 
     auto* side = gtk_box_new(GTK_ORIENTATION_VERTICAL, 16);

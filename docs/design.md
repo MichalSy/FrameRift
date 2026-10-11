@@ -15,7 +15,7 @@ The visual direction uses dark graphite surfaces, restrained separators, compact
 
 The UI is native. Animations should provide short, smooth transitions and immediate feedback. Library artwork may feel lively; analysis tools must remain calm and readable. UI performance needs measurement, especially when the game and profiler run together.
 
-The implementation covers the library/cache, automatic folder scanning, Linux launch/rebuild, Profiler console output, local UDP/MCP receiving and game control, Settings with keyring credentials and animated heroes. The live frame-analysis workspace, captures and saved input scripts below remain design targets; the AnyPS5 bridge adapter is still required.
+The implementation covers the library/cache, automatic folder scanning, Linux launch/rebuild, Profiler console output, local UDP/MCP receiving and game control, Settings with keyring credentials and animated heroes. AnyPS5's optional adapter establishes connection state. The live frame-analysis workspace, captures and saved input scripts below remain design targets; their game-side measurement/execution capabilities are still required.
 
 ## View 1: Library
 

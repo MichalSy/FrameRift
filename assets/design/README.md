@@ -16,7 +16,7 @@ These images document FrameRift's visual direction. They were created with the b
 | [profiler-live-v2.png](profiler-live-v2.png) | FPS overview, live frame detail, scoped top consumers, script/capture pane | 1605 × 980 pixels |
 | [profiler-input-scripts.png](profiler-input-scripts.png) | Per-game scripts, optional start frame, relative actions and capture checkpoints | 1604 × 980 pixels |
 
-The profiler values are illustrative examples. The new workspace concepts contain empty screenshot placeholders and no generated game artwork. Their **FPS (estimated)** label refers to a planned calculation from runtime flip intervals. Input scripts run immediately by default; absolute/delayed starts are optional. The AnyPS5 adapter, captures, saved scripts and script MCP tools remain unimplemented. Other fictional games and covers in the earlier concepts serve the design. ASTRO BOT in the library is an artwork example, not a claim that it runs with AnyPS5.
+The profiler values are illustrative examples. The new workspace concepts contain empty screenshot placeholders and no generated game artwork. Their **FPS (estimated)** label refers to a planned calculation from runtime flip intervals. Input scripts run immediately by default; absolute/delayed starts are optional. AnyPS5's optional adapter currently establishes connection state only. Measurements, captures, saved scripts and script MCP tools remain unimplemented. Other fictional games and covers in the earlier concepts serve the design. ASTRO BOT in the library is an artwork example, not a claim that it runs with AnyPS5.
 
 ## Artwork references
 

@@ -7,7 +7,7 @@ Additional attribution terms: see NOTICE in the repository root.
 
 # Profiler workspace and game input scripts
 
-This is a design and proposed integration contract. FrameRift currently has a console, game lifecycle tools and the receiving/command side of the bridge. The AnyPS5 bridge adapter, structured measurements, captures and saved input scripts are not implemented. This design does not change AnyPS5. The reference images use example values, not measured gameplay.
+This is a design and proposed integration contract. FrameRift currently has a console, game lifecycle tools and the receiving/command side of the bridge. AnyPS5 has an optional connection-only adapter; structured measurements, captures and saved input scripts are not implemented. This design does not add those capabilities. The reference images use example values, not measured gameplay.
 
 ## Workspace
 
@@ -154,7 +154,7 @@ Current measurement semantics and source references are in [Profiling and frame 
 
 ### Local source anchors
 
-The modified AnyPS5 checkout was inspected read-only for this proposal. Relevant paths below are relative to that checkout, not files added to FrameRift. They describe existing instrumentation and possible hook locations, not an implemented adapter.
+The modified AnyPS5 checkout was inspected read-only for this measurement proposal. Relevant paths below are relative to that checkout, not files added to FrameRift. They describe existing instrumentation and possible hook locations, not implemented measurement/capture capabilities in the connection-only adapter.
 
 | Concern | Source anchor |
 | --- | --- |

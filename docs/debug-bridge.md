@@ -7,13 +7,13 @@ Additional attribution terms: see NOTICE in the repository root.
 
 # Debug bridge and MCP
 
-FrameRift implements the receiving/command side of an optional runtime bridge. A loopback UDP worker receives events independently of GTK rendering. A local MCP server exposes those events and queues commands for the connected runtime. The AnyPS5 sender, game instrumentation, input execution and screenshot capture are separate work; this change does not add them to AnyPS5.
+FrameRift implements the receiving/command side of an optional runtime bridge. A loopback UDP worker receives events independently of GTK rendering. A local MCP server exposes those events and queues commands for the connected runtime. AnyPS5 has an optional connection-only sender; game measurements, input execution and screenshot capture remain separate work.
 
 ## Current capabilities
 
 The running FrameRift app exposes nine MCP tools. Library listing, managed game start/stop, asynchronous process status and recent log lines work today using the same game lifecycle as the UI. These five tools do not require a connected game bridge. Process output continues into complete session log files.
 
-The four bridge tools expose connection state, buffered events and asynchronous command receipt/completion. FrameRift's UDP receiving/command server is implemented; an AnyPS5 game-side adapter is still required to produce measurements, apply automated inputs or capture frames. A launched game is not automatically a connected telemetry source. The current server neither stores input scripts nor offers script-list/run tools.
+The four bridge tools expose connection state, buffered events and asynchronous command receipt/completion. FrameRift's UDP receiving/command server is implemented. A bridge-enabled AnyPS5 build can connect and maintain liveness, with an empty capability list. It produces no measurements and cannot apply automated inputs or capture frames. A connection alone does not prove rendering progress. The current server neither stores input scripts nor offers script-list/run tools.
 
 The proposed live profiler, durable game scripts, snapshots and future script MCP tools are specified separately in [Profiler workspace and game input scripts](profiler-workspace.md). That document and its ImageGen references describe planned functionality.
 
@@ -38,6 +38,14 @@ FRAMERIFT_GAME_ID=<stable game ID>
 ```
 
 Conversion receives none of these bridge variables. Spawn failure or process exit detaches the session and rejects late handshakes for that session. Before any managed launch, a separately launched local runtime can connect using its own nonempty session/game IDs. Only one peer is connected at a time.
+
+### Connection-only AnyPS5 build
+
+Configure AnyPS5 with `-DANYPS5_ENABLE_DEBUG_BRIDGE=ON` and rebuild its patched runtime libraries. The default is `OFF`: ordinary builds contain neither the worker nor the startup call. The included bridge starts when the video output driver initializes, using the managed launch variables above. All four variables must be valid; only `127.0.0.1` is accepted. Set `APS5_DEBUG_BRIDGE=0` to disable the worker for a run.
+
+One independent thread uses a persistent nonblocking UDP socket. It sends `hello`, one-second heartbeats and periodic repeated `hello` packets without waiting for a reply. Normal runtime shutdown sends a best-effort `goodbye`; forced termination uses the existing disconnect/timeout behavior. A missing receiver does not stop the game or alter its default logs.
+
+This first adapter advertises `capabilities: []` and omits `frame`. `get_bridge_status` can show connected while `get_events` is empty and `received_events` remains zero. Monitoring, inputs and capture commands are rejected as unavailable. Structured telemetry and command execution are later integration steps.
 
 ## MCP client
 
@@ -142,6 +150,6 @@ The worker processes at most 32 received datagrams before servicing outgoing com
 
 At most 64 commands can await receipt/completion, with 128 command records retained. Older terminal records are removed when capacity is needed. Bridge events remain in memory; complete process logs continue through the existing session-log path.
 
-For input automation, the intended runtime contract is to upload a whole sequence before it starts: an absolute start frame such as `500`, followed by offsets such as `+20` relative to the previous **planned** action, with explicit button down/up. FrameRift currently forwards the sequence in `schedule_inputs.args`; it does not interpret those offsets or execute inputs. The exact action schema must be agreed with the AnyPS5 adapter. Screenshot commands likewise require runtime support; image transfer and a dashboard are not implemented in this slice.
+For input automation, the intended runtime contract is to upload a whole sequence before it starts: an optional absolute start frame such as `500`, followed by offsets such as `+20` relative to the previous **planned** action, with explicit button down/up. Omitting a start uses the next available input boundary after acceptance, as specified in the [script design](profiler-workspace.md). FrameRift can forward a sequence in `schedule_inputs.args` when a runtime advertises support; it does not interpret those offsets or execute inputs. The connection-only adapter advertises no such support. Screenshot commands likewise require runtime support; image transfer and a dashboard are not implemented in this slice.
 
-The native `debug_bridge` check exchanges actual UDP packets and HTTP MCP requests with a mock runtime. `game_mcp` checks library queries, managed start/stop, preparation errors and log tails using temporary game/runtime fixtures. Real gameplay timing, overhead and end-to-end input/screenshot behavior remain to be measured after the adapter exists.
+The native `debug_bridge` check exchanges actual UDP packets and HTTP MCP requests with a mock runtime. `game_mcp` checks library queries, managed start/stop, preparation errors and log tails using temporary game/runtime fixtures. AnyPS5's connection checks exercise actual loopback datagrams, liveness, shutdown and disabled/invalid configuration. Real gameplay timing, overhead and end-to-end input/screenshot behavior remain to be measured after those capabilities exist.

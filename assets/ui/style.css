@@ -53,12 +53,16 @@ button { box-shadow: none; text-shadow: none; }
 .bridge-indicator.connected { color: #8adbb3; }
 .profiler-page { background: #0b161e; }
 .profiler-live { padding: 0 24px 24px; }
-.profiler-page button, .profiler-page dropdown > button { border-radius: 6px; border: 1px solid #345267; background: #182e40; padding: 5px 14px; min-height: 25px; box-shadow: none; font-size: 12px; }
+.profiler-page button, .profiler-page dropdown > button { border-radius: 3px; border: 1px solid #345267; background: #182e40; color: #c5d6e2; padding: 5px 14px; min-height: 25px; box-shadow: none; font-size: 12px; }
 .profiler-page button:checked { background: #133d55; border-color: #00b9d3; color: #effbff; }
 .profiler-page button:disabled { color: #8198aa; }
-.profiler-page checkbutton { font-size: 12px; }
-.profiler-page checkbutton check { border-radius: 3px; min-width: 14px; min-height: 14px; border-color: #3c6177; }
-.profiler-page checkbutton check:checked { background: #24d4eb; color: #07131c; }
+/* Reset the indicator box explicitly instead of inheriting theme padding. */
+.profiler-page checkbutton { font-size: 12px; padding: 0; margin: 0; border: none; background: none; }
+.profiler-page checkbutton > check { border-radius: 2px; min-width: 16px; min-height: 16px; padding: 0; margin: 0; border: 1px solid #527082; background: #0b161e; box-shadow: none; color: #effbff; }
+.profiler-page checkbutton > label { margin-left: 8px; }
+.profiler-page checkbutton > check:checked { background: #14516a; border-color: #24d4eb; color: #effbff; }
+.profiler-page checkbutton:disabled { color: #8198aa; }
+.profiler-page checkbutton > check:disabled { border-color: #345267; opacity: .6; }
 .profiler-session { padding: 16px 24px; border-bottom: 1px solid #345366; }
 .profiler-title { font-size: 20px; font-weight: 700; }
 .profiler-status { font-size: 11px; color: #9cb4c6; }
@@ -70,8 +74,9 @@ button { box-shadow: none; text-shadow: none; }
 .monitoring-state.pending, .work-active { color: #ffc75b; }
 .monitor-control-label { font-size: 12px; color: #adc5d6; }
 .profiler-tabs button { min-width: 45px; padding: 3px 14px; }
-.metric-strip { border: 1px solid #294656; border-radius: 8px; background: #102332; }
-.metric-card { padding: 10px 20px; border-right: 1px solid #294656; }
+.profiler-card { padding: 16px; border: 1px solid #294656; border-radius: 4px; background: #102332; }
+.profiler-card.metric-strip { padding: 0; }
+.metric-card { padding: 16px; border-right: 1px solid #294656; }
 .metric-card:last-child { border-right: none; }
 .metric-label { color: #d4e2ec; font-size: 13px; }
 .metric-value { color: #edf6fc; font-size: 28px; font-weight: 600; font-feature-settings: "tnum"; }
@@ -79,11 +84,10 @@ button { box-shadow: none; text-shadow: none; }
 .monitor-window { color: #b6cad8; font-size: 13px; }
 .monitor-freshness, .monitor-coverage { color: #9ab2c4; font-size: 11px; }
 .metric-value.stale, .monitor-freshness.stale { color: #b8a47c; }
-.monitor-panel { padding: 20px; border: 1px solid #294656; border-radius: 8px; background: #102332; }
 .monitor-heading { font-size: 17px; font-weight: 600; color: #edf4fa; }
 .frame-value { font-size: 12px; color: #e1edf6; font-feature-settings: "tnum"; }
 .resource-row > flowboxchild { padding: 0; border: none; background: transparent; }
-.consumer-frame { color: #24d4eb; font-size: 12px; padding: 5px 8px; border: 1px solid #009fb9; border-radius: 6px; }
+.consumer-frame { color: #24d4eb; font-size: 12px; padding: 5px 8px; border: 1px solid #009fb9; border-radius: 3px; }
 .consumer-pending { font-size: 11px; color: #ffc75b; }
 .consumer-cell { font-size: 13px; padding: 8px 0; border-bottom: 1px solid #345366; }
 .consumer-column { color: #a8c0d2; }
@@ -100,9 +104,13 @@ button { box-shadow: none; text-shadow: none; }
 .resource-gauge.over-budget progress { background: #e4ac5a; }
 .resource-panel.stale .resource-gauge { opacity: .5; }
 .profiler-footer { border-top: 1px solid #345366; padding: 16px 0 0; }
-.console-frame { border: 1px solid #294656; border-radius: 8px; background: #122431; }
+.console-frame { border: 1px solid #294656; border-radius: 4px; background: #122431; }
 .profiler-console { padding: 0 24px 24px; }
 .console-empty { color: #8fa8ba; font-size: 15px; }
 
 .chart-header-overlay { background: #102332; }
-.mode-toggle { min-width: 96px; }
+.profiler-page .segmented-control button { border-radius: 0; min-width: 40px; padding: 5px 12px; }
+.profiler-page .segmented-control button:first-child { border-radius: 3px 0 0 3px; }
+.profiler-page .segmented-control button:last-child { border-radius: 0 3px 3px 0; margin-left: -1px; }
+.profiler-page .segmented-control button:checked { background: #14516a; border-color: #24d4eb; color: #effbff; }
+.profiler-page .segmented-control button:focus-visible { outline: 2px solid #a1e9f3; outline-offset: -3px; }

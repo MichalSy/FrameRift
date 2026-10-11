@@ -17,17 +17,23 @@ Reference: [profiler-live-v6](../assets/design/profiler-live-v6.png). The native
 
 ## Compact native preview
 
-The current layout was checked in an isolated GTK window using the actual ProfilerView and default unavailable values. The primary app and game were not restarted. Frame details and selection now occupy the chart header overlay, the FPS/Flip interval control is a single toggle, and the overview values are smaller. The screenshots above belong to the previous live build.
+The current layout was checked in an isolated GTK window using the actual ProfilerView, synthetic layout fixtures and unavailable values. Fixture screenshots below are UI checks, not game measurements. The primary app and game were not restarted. Frame details and selection now occupy the chart header overlay, the FPS/Flip interval control shows both options with one active selection, and the overview values are smaller. The screenshots above belong to the previous live build.
 
-![Compact native preview with unavailable values](../assets/screenshots/profiler-compact-preview.png)
+![Wide native fixture: FPS and checked controls](../assets/screenshots/profiler-controls-wide.png)
+
+![Narrow native fixture: flip interval and unchecked controls](../assets/screenshots/profiler-controls-narrow.png)
+
+![Narrow native fixture: scrolled resources](../assets/screenshots/profiler-controls-resources.png)
 
 ## Visual direction
 
-The original v6 implementation was manually assessed at 84/100 against its flat-panel concept. The current palette, 8 px card corners, more spacious rows and scrolling intentionally follow the newer requested styling. That earlier score is not a pixel-similarity claim for the revised appearance.
+The original v6 implementation was manually assessed at 84/100 against its flat-panel concept. The current palette, 4 px card corners, more spacious rows and scrolling intentionally follow the newer requested styling. That earlier score is not a pixel-similarity claim for the revised appearance.
 
-Cards use 20 px internal padding and 16 px section/column gaps. Shader work and cache rows have deliberate vertical spacing. Each memory label/value pair aligns across the card, with its budget bar on a separate full-width line. Numeric columns retain tabular digits, right alignment and stable overview widths.
+Cards use 16 px internal padding and 16 px section/column gaps. Shader work and cache rows have deliberate vertical spacing. Each memory label/value pair aligns across the card, with its budget bar on a separate full-width line. Numeric columns retain tabular digits, right alignment and stable overview widths.
 
 ## Verification
+
+The revised controls were inspected at 1500 × 1150 and 1100 × 850. Both mode captions remain readable with a ten-digit frame ID and a three-digit worst interval. Native toggling confirms mutual exclusion and redraw in both modes. Follow live and Monitoring were checked on and off; the indicator allocation is 16 × 16 without inherited theme padding. Disabled controls remain distinct from enabled options. Narrow layouts stack the resource column; scrolling exposes the complete shader/memory cards without horizontal overflow. All dashboard card containers share one factory and CSS class, 16 px padding/gaps and 4 px corners. Theme-independent button foregrounds are explicit.
 
 - Native shell check: connection status remains beside Profiler on both pages; search and refresh are visible in Library and hidden in Profiler. Branding, Settings and window controls keep the shared shell styling.
 - Native build succeeds (`cmake --build build -j2`); the previous workspace implementation also passed a full clean build.

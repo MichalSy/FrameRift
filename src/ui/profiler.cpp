@@ -20,7 +20,7 @@ namespace framerift {
 namespace {
 
 using ui::label;
-using ui::panel;
+using ui::card;
 
 void show_error(GtkWidget* widget, const char* message) noexcept {
     g_printerr("FrameRift: %s\n", message);
@@ -152,7 +152,7 @@ ProfilerView::ProfilerView(std::function<void(bool)> request_monitoring)
     gtk_widget_add_css_class(live, "profiler-live");
     gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(live_scroll), live);
     gtk_stack_add_titled(GTK_STACK(workspace), live_scroll, "live", "Live");
-    auto* cards = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+    auto* cards = card(GTK_ORIENTATION_HORIZONTAL, 0);
     gtk_widget_add_css_class(cards, "metric-strip");
     auto* metric_values = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
     gtk_box_set_homogeneous(GTK_BOX(metric_values), true);
@@ -179,9 +179,9 @@ ProfilerView::ProfilerView(std::function<void(bool)> request_monitoring)
     gtk_box_append(GTK_BOX(cards), summary);
     gtk_box_append(GTK_BOX(live), cards);
 
-    auto* chart_panel = panel();
+    auto* chart_panel = card();
     gtk_widget_add_css_class(chart_panel, "pacing-panel");
-    auto* chart_header = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
+    auto* chart_header = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 16);
     auto* chart_title = label("Frame pacing", "monitor-heading");
     gtk_widget_set_hexpand(chart_title, true);
     gtk_box_append(GTK_BOX(chart_header), chart_title);
@@ -200,14 +200,15 @@ ProfilerView::ProfilerView(std::function<void(bool)> request_monitoring)
         catch (...) { show_error(self.root_, "Could not select a frame"); }
     }), this);
     gtk_box_append(GTK_BOX(chart_header), frame_selector_);
-    chart_mode_toggle_ = ui::mode_toggle("FPS", "Flip interval");
-    gtk_widget_set_tooltip_text(chart_mode_toggle_, "Switch between FPS and flip intervals");
-    g_signal_connect(chart_mode_toggle_, "toggled", G_CALLBACK(+[](GtkToggleButton* button, gpointer data) {
+    const auto modes = ui::segmented_control("FPS", "Flip interval");
+    chart_fps_button_ = modes.first;
+    gtk_widget_set_tooltip_text(chart_fps_button_, "Switch between FPS and flip intervals");
+    g_signal_connect(chart_fps_button_, "toggled", G_CALLBACK(+[](GtkToggleButton* button, gpointer data) {
         auto& self = *static_cast<ProfilerView*>(data);
-        self.chart_fps_ = !gtk_toggle_button_get_active(button);
+        self.chart_fps_ = gtk_toggle_button_get_active(button);
         gtk_widget_queue_draw(self.chart_);
     }), this);
-    gtk_box_append(GTK_BOX(chart_header), chart_mode_toggle_);
+    gtk_box_append(GTK_BOX(chart_header), modes.root);
     follow_live_ = gtk_check_button_new_with_label("Follow live");
     gtk_check_button_set_active(GTK_CHECK_BUTTON(follow_live_), true);
     g_signal_connect(follow_live_, "toggled", G_CALLBACK(+[](GtkCheckButton* button, gpointer data) {
@@ -249,11 +250,11 @@ ProfilerView::ProfilerView(std::function<void(bool)> request_monitoring)
     gtk_flow_box_set_column_spacing(GTK_FLOW_BOX(lower), 16);
     gtk_flow_box_set_row_spacing(GTK_FLOW_BOX(lower), 16);
     gtk_widget_add_css_class(lower, "resource-row");
-    auto* consumers = panel();
+    auto* consumers = card();
     gtk_widget_add_css_class(consumers, "consumers-panel");
     gtk_widget_set_size_request(consumers, 850, -1);
     gtk_widget_set_hexpand(consumers, true);
-    auto* consumer_header = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
+    auto* consumer_header = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 16);
     gtk_box_append(GTK_BOX(consumer_header), label("Top frame consumers", "monitor-heading"));
     consumer_frame_ = label("Frame –", "consumer-frame");
     gtk_box_append(GTK_BOX(consumer_header), consumer_frame_);
@@ -306,9 +307,9 @@ ProfilerView::ProfilerView(std::function<void(bool)> request_monitoring)
     auto* side = gtk_box_new(GTK_ORIENTATION_VERTICAL, 16);
     gtk_widget_set_size_request(side, 430, -1);
     gtk_widget_set_hexpand(side, true);
-    resource_panel_ = panel();
+    resource_panel_ = card();
     gtk_widget_add_css_class(resource_panel_, "resource-panel");
-    auto* resource_header = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
+    auto* resource_header = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 16);
     auto* resource_title = label("Shader activity", "monitor-heading");
     gtk_widget_set_hexpand(resource_title, true);
     gtk_box_append(GTK_BOX(resource_header), resource_title);
@@ -356,7 +357,7 @@ ProfilerView::ProfilerView(std::function<void(bool)> request_monitoring)
     gtk_box_append(GTK_BOX(resource_panel_), cache);
     resource_scope_ = resource_title;
     gtk_box_append(GTK_BOX(side), resource_panel_);
-    memory_panel_ = panel();
+    memory_panel_ = card();
     gtk_widget_add_css_class(memory_panel_, "resource-panel");
     gtk_box_append(GTK_BOX(memory_panel_), label("Memory", "monitor-heading"));
     auto* memory_rows = gtk_box_new(GTK_ORIENTATION_VERTICAL, 16);
@@ -507,7 +508,7 @@ ProfilerView::ProfilerView(std::function<void(bool)> request_monitoring)
 ProfilerView::~ProfilerView() {
     g_signal_handlers_disconnect_by_data(monitoring_toggle_, this);
     g_signal_handlers_disconnect_by_data(frame_selector_, this);
-    g_signal_handlers_disconnect_by_data(chart_mode_toggle_, this);
+    g_signal_handlers_disconnect_by_data(chart_fps_button_, this);
     g_signal_handlers_disconnect_by_data(follow_live_, this);
     g_signal_handlers_disconnect_by_data(chart_click_, this);
     gtk_drawing_area_set_draw_func(GTK_DRAWING_AREA(chart_), nullptr, nullptr, nullptr);

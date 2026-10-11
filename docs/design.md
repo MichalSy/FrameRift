@@ -56,7 +56,7 @@ Account for long names, missing logos, very bright images and missing artwork. C
 
 The current Profiler has **Live** and **Logs** views. The game runs in its external window. A compact session strip identifies process, bridge and monitoring state.
 
-The overview shows estimated FPS and mean/P95/worst flip intervals. A full-width pacing chart defaults to FPS, with one FPS/Flip interval toggle and frame details/selection overlaid in its header. Reusable GTK factories provide labels, panels, metric cards, mode toggles and header overlays. Below it, a ten-row consumer table reserves per-frame timing, call counts and share bars. Shader activity and memory occupy the right column. Missing consumer data uses `–` and empty bars; source age and unavailable/stale states remain explicit. The dashboard contains no automation pane.
+The overview shows estimated FPS and mean/P95/worst flip intervals. A full-width pacing chart defaults to FPS, with a segmented FPS/Flip interval control showing both options and frame details/selection overlaid in its header. Reusable GTK factories provide labels, a shared card component, metric fields, segmented controls and header overlays. Below it, a ten-row consumer table reserves per-frame timing, call counts and share bars. Shader activity and memory occupy the right column. Missing consumer data uses `–` and empty bars; source age and unavailable/stale states remain explicit. The dashboard contains no automation pane.
 
 See [Profiling](profiling.md) for implemented measurement semantics and [native visual review](profiler-design-review.md) for screenshots against the v6 reference. [Profiler workspace and game input scripts](profiler-workspace.md) describes deferred capture and script requirements.
 

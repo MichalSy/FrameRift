@@ -16,9 +16,9 @@ inline GtkWidget* label(const char* text, const char* style = nullptr) {
     return widget;
 }
 
-inline GtkWidget* panel() {
-    auto* widget = gtk_box_new(GTK_ORIENTATION_VERTICAL, 16);
-    gtk_widget_add_css_class(widget, "monitor-panel");
+inline GtkWidget* card(GtkOrientation orientation = GTK_ORIENTATION_VERTICAL, int spacing = 16) {
+    auto* widget = gtk_box_new(orientation, spacing);
+    gtk_widget_add_css_class(widget, "profiler-card");
     return widget;
 }
 
@@ -40,17 +40,22 @@ inline MetricCard metric_card(const char* title, bool primary = false) {
     return {root, value};
 }
 
-// The widget owns both captions; inactive selects the first, active the second.
-inline GtkWidget* mode_toggle(const char* first, const char* second) {
-    auto* button = gtk_toggle_button_new_with_label(first);
-    gtk_widget_add_css_class(button, "mode-toggle");
-    g_object_set_data_full(G_OBJECT(button), "mode-first", g_strdup(first), g_free);
-    g_object_set_data_full(G_OBJECT(button), "mode-second", g_strdup(second), g_free);
-    g_signal_connect(button, "toggled", G_CALLBACK(+[](GtkToggleButton* button, gpointer) {
-        const auto* key = gtk_toggle_button_get_active(button) ? "mode-second" : "mode-first";
-        gtk_button_set_label(GTK_BUTTON(button), static_cast<const char*>(g_object_get_data(G_OBJECT(button), key)));
-    }), nullptr);
-    return button;
+struct SegmentedControl {
+    GtkWidget* root;
+    GtkWidget* first;
+    GtkWidget* second;
+};
+
+inline SegmentedControl segmented_control(const char* first, const char* second) {
+    auto* root = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+    gtk_widget_add_css_class(root, "segmented-control");
+    auto* a = gtk_toggle_button_new_with_label(first);
+    auto* b = gtk_toggle_button_new_with_label(second);
+    gtk_toggle_button_set_group(GTK_TOGGLE_BUTTON(b), GTK_TOGGLE_BUTTON(a));
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(a), true);
+    gtk_box_append(GTK_BOX(root), a);
+    gtk_box_append(GTK_BOX(root), b);
+    return {root, a, b};
 }
 
 inline GtkWidget* header_overlay(GtkWidget* content, GtkWidget* header) {

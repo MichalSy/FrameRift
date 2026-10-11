@@ -108,7 +108,9 @@ button { box-shadow: none; text-shadow: none; }
 
 .chart-header-overlay { background: #102332; }
 .profiler-page .segmented-control button { border-radius: 0; min-width: 40px; padding: 5px 12px; }
-.profiler-page .segmented-control button:first-child { border-radius: 3px 0 0 3px; }
-.profiler-page .segmented-control button:last-child { border-radius: 0 3px 3px 0; margin-left: -1px; }
+/* The second button owns the shared divider; no overlapping borders. */
+.profiler-page .segmented-control button:first-child { border-radius: 3px 0 0 3px; border-right-width: 0; }
+.profiler-page .segmented-control button:last-child { border-radius: 0 3px 3px 0; }
 .profiler-page .segmented-control button:checked { background: #14516a; border-color: #24d4eb; color: #effbff; }
+.profiler-page .segmented-control button:checked + button { border-left-color: #24d4eb; }
 .profiler-page .segmented-control button:focus-visible { outline: 2px solid #a1e9f3; outline-offset: -3px; }

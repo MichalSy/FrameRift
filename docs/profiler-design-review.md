@@ -35,7 +35,7 @@ Cards use 16 px internal padding and 16 px section/column gaps. Shader work and 
 
 ## Verification
 
-Live/Logs reuses the chart segmented control. Native mouse clicks verify switching to Logs and returning to Live while preserving chart mode. The chart drawing area is 190 px high and the FPS axis is fixed at 0–75 with labels at 13, 30 and 60 and a brighter bold unit label; interval mode still scales automatically.
+Live/Logs reuses the chart segmented control. The shared divider is drawn once and follows the selected side; screenshots verify complete outlines for both left and right selection. Native mouse clicks verify switching to Logs and returning to Live while preserving chart mode. The chart drawing area is 190 px high and the FPS axis is fixed at 0–75 with labels at 13, 30 and 60 and a brighter bold unit label; interval mode still scales automatically.
 
 The revised controls were inspected at 1500 × 1250 and 1100 × 850. Both mode captions remain readable with a ten-digit frame ID and a three-digit worst interval. Native toggling confirms mutual exclusion and redraw in both modes. Follow live and Monitoring were checked on and off; the indicator allocation is 16 × 16 without inherited theme padding. Disabled controls remain distinct from enabled options. Narrow layouts stack the resource column; scrolling exposes the complete shader/memory cards without horizontal overflow. The top strip contains only the four metrics; sample counts, coverage and observation-window state sit in the bottom status row, verified in wide and scrolled narrow layouts. All dashboard card containers share one factory and CSS class, 16 px padding/gaps and 4 px corners. Theme-independent button foregrounds are explicit.
 

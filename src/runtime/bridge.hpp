@@ -56,6 +56,55 @@ struct MonitoringStats {
     std::optional<double> worst_interval_us;
 };
 
+struct ResourceShaderState {
+    std::uint64_t translations_active = 0;
+    std::uint64_t translations_completed = 0;
+    std::uint64_t cached_variants_count = 0;
+    std::uint64_t source_code_bytes = 0;
+    std::uint64_t variant_spirv_bytes = 0;
+    std::uint64_t disk_cache_hits = 0;
+    std::uint64_t disk_cache_misses = 0;
+    std::uint64_t disk_cache_writes = 0;
+    std::uint64_t disk_cache_load_failures = 0;
+    std::uint64_t disk_cache_write_failures = 0;
+    std::uint64_t preparation_queue_pending = 0;
+    std::uint64_t preparation_active = 0;
+    std::uint64_t pipeline_builds_active = 0;
+    std::uint64_t pipeline_builds_completed = 0;
+    std::uint64_t pipeline_optimization_queue_pending = 0;
+    std::uint64_t pipeline_optimizations_active = 0;
+};
+
+struct ResourceMemoryState {
+    std::optional<std::uint64_t> process_rss_bytes;
+    std::optional<std::uint64_t> process_rss_timestamp_us;
+    std::optional<std::uint64_t> sampled_cache_bytes;
+    std::optional<std::uint64_t> sampled_cache_budget_bytes;
+    std::optional<std::uint64_t> storage_cache_bytes;
+    std::optional<std::uint64_t> storage_cache_budget_bytes;
+    std::optional<std::uint64_t> gpu_heap_usage_bytes;
+    std::optional<std::uint64_t> gpu_heap_budget_bytes;
+    std::optional<std::uint64_t> gpu_heap_timestamp_us;
+};
+
+struct ResourceSample {
+    std::uint64_t timestamp_us = 0;
+    std::uint64_t monitoring_epoch = 0;
+    ResourceShaderState shaders;
+    ResourceMemoryState memory;
+};
+
+struct ResourceSnapshot {
+    bool supported = false;
+    bool has_sample = false;
+    bool stale = false;
+    std::string state;
+    std::optional<double> age_ms;
+    std::optional<double> process_rss_age_ms;
+    std::optional<double> gpu_heap_age_ms;
+    std::optional<ResourceSample> sample;
+};
+
 struct MonitoringSnapshot {
     bool connected = false;
     bool supported = false;
@@ -77,6 +126,7 @@ struct MonitoringSnapshot {
     std::optional<double> age_ms;
     MonitoringStats stats;
     std::vector<MonitoringSample> samples;
+    ResourceSnapshot resources;
 };
 
 // Owns a loopback UDP socket and its worker. Public methods are thread-safe.

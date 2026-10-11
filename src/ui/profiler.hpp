@@ -44,6 +44,7 @@ private:
     void scroll_to_end();
     void open_log();
     void update_frame_detail();
+    void update_resources();
     void inspect_chart(double x, double y);
     void draw_chart(cairo_t* context, int width, int height) noexcept;
 
@@ -68,6 +69,13 @@ private:
     GtkWidget* frame_scope_ = nullptr;
     GtkWidget* chart_ = nullptr;
     GtkGesture* chart_click_ = nullptr;
+    GtkWidget* resource_panel_ = nullptr;
+    GtkWidget* resource_state_ = nullptr;
+    GtkWidget* resource_scope_ = nullptr;
+    std::array<GtkWidget*, 4> shader_values_{};
+    std::array<GtkWidget*, 4> memory_values_{};
+    std::array<GtkWidget*, 3> memory_gauges_{};
+    GtkWidget* heap_label_ = nullptr;
     GtkWidget* empty_ = nullptr;
     GtkWidget* view_ = nullptr;
     GtkWidget* follow_ = nullptr;

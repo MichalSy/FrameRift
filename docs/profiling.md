@@ -11,7 +11,9 @@ The Profiler has **Live** and **Logs** views for an externally launched game. Th
 
 The Live view uses the [UDP debug bridge and MCP server](debug-bridge.md). Turn **Monitoring** on to receive successful main-output flip summaries from a bridge-enabled AnyPS5 build. The dashboard updates once per second with estimated FPS, mean/P95/worst flip interval, sample coverage, latest/worst frame details and a bounded 60-second history. Selecting a chart point preserves that frame until Follow live is resumed. Collection continues across tab changes; stop/disconnect retains the last observation with an explicit inactive/stale state.
 
-The same normalized model is available through `get_monitoring_snapshot`. Game-side monotonic timestamps determine intervals and source windows; UDP receive age determines freshness. The first completion after activation or output reset has no interval. Per-stream completion IDs identify missing samples separately from general packet gaps and producer drops. The dashboard does not acknowledge telemetry, parse timing files or enable existing timing/draw/GPU log settings. CPU hotspots, GPU/memory tables, saved snapshots and screenshots remain later increments.
+The same normalized model is available through `get_monitoring_snapshot`. Game-side monotonic timestamps determine intervals and source windows; UDP receive age determines freshness. The first completion after activation or output reset has no interval. Per-stream completion IDs identify missing samples separately from general packet gaps and producer drops. The dashboard does not acknowledge telemetry, parse timing files or enable existing timing/draw/GPU log settings. CPU hotspots, GPU execution tables, saved snapshots and screenshots remain later increments.
+
+The **Shader & memory** panel shows registration-preparation jobs, translation activity/completions, cached variants, shader CPU payload, disk-cache counters and scoped memory gauges. Resource changes are coalesced independently of frames, with a five-second refresh and ten-second freshness limit. Linux RSS is sampled once per second by the bridge worker. Texture-cache accounting and the last existing Vulkan budget query are published at their own update sites; GPU source age remains visible. Resource data belongs to the latest resource sample, not to an inspected frame. See the [resource field contract](debug-bridge.md#shader-and-memory-resources) for units, scopes and unavailable values.
 
 Confirmed AnyPS5 details refer to [upstream `197ffac97203d715a258a28b432fa2eedbf8be6f`](https://github.com/boykopovar/AnyPS5/tree/197ffac97203d715a258a28b432fa2eedbf8be6f). This source snapshot is not a FrameRift runtime benchmark. See [AnyPS5 integration](anyps5-integration.md), [Controller and input](controller-input.md) and the [project overview](../README.md).
 
@@ -60,7 +62,7 @@ Existing CPU timings use `std::chrono::steady_clock` to measure elapsed time in 
 
 Inclusive phases may nest or overlap. FrameRift must not add them into an apparent total CPU frame time without checking their relationships. Background work completed between two flips is not necessarily attributable to just one of those frames.
 
-A later process monitor could add operating-system measurements such as CPU utilization and memory use. These would be labeled as a separate source with their sampling interval. Whole-process CPU utilization, the cost of an instrumented driver phase and the CPU time of a particular game thread are different quantities.
+The resource panel already includes Linux process RSS from the bridge worker, with its own sampling age. Process CPU utilization remains a possible later source. Whole-process CPU utilization, the cost of an instrumented driver phase and the CPU time of a particular game thread are different quantities.
 
 ## Existing GPU profiling and its limits
 
@@ -77,9 +79,9 @@ GPU results may become available only after a later flip. The existing timing co
 The proposed [profiler workspace](profiler-workspace.md) uses the following order, without requiring a full debugger:
 
 1. Game session with process status and live logs; available in the console.
-2. Structured frame summaries from the later bridge adapter; timing-file import remains a separate possible source.
-3. A prominent **FPS (estimated)** card, flip-interval chart and statistics with explicit calculations.
-4. Details of a selected frame and driver/GPU tables with their actual measurement window and source.
+2. Structured frame summaries from the implemented bridge adapter; timing-file import remains a separate possible source.
+3. The implemented **FPS (estimated)** card, flip-interval chart and statistics with explicit calculations.
+4. Implemented selected-frame details and latest shader/memory state; detailed driver/GPU execution tables remain planned, with their actual measurement window and source.
 5. Immutable telemetry snapshots and optional asynchronous screenshots with frame/capture association.
 6. Durable per-game input scripts, optional scheduled starts and capture checkpoints, shared by UI and future MCP tools.
 
@@ -102,7 +104,7 @@ The following fields are a **proposal**, not an existing AnyPS5 protocol:
 
 A frame ID is valid within a uniquely named session and measurement source. It is not globally unique across restarts. Late GPU data should retain its original submission/batch correlation; arrival time in the launcher is not frame attribution.
 
-FrameRift's first transport is now IPv4 loopback UDP with versioned JSON packets, session/peer pinning and advertised command capabilities. The [implemented protocol](debug-bridge.md) deliberately leaves metric payload semantics and runtime execution to the adapter. The richer measurement fields above remain proposals.
+FrameRift's transport is IPv4 loopback UDP with versioned JSON packets, session/peer pinning and advertised capabilities. The [implemented protocol](debug-bridge.md) defines frame and shader/resource payloads; runtime execution belongs to the adapter. The detailed CPU/GPU execution records described above remain proposals.
 
 ## Overhead and backpressure
 

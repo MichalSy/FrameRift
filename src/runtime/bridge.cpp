@@ -34,7 +34,39 @@ constexpr auto retry_delay = std::chrono::milliseconds(500);
 constexpr std::size_t monitoring_limit = 8192;
 constexpr std::uint64_t monitoring_history_us = 60 * 1000000;
 constexpr std::uint64_t monitoring_window_us = 1000000;
+constexpr double resource_stale_ms = 10000.0;
 using Clock = std::chrono::steady_clock;
+
+constexpr std::pair<const char*, std::uint64_t ResourceShaderState::*> resource_shader_fields[] = {
+    {"translations_active", &ResourceShaderState::translations_active},
+    {"translations_completed", &ResourceShaderState::translations_completed},
+    {"cached_variants_count", &ResourceShaderState::cached_variants_count},
+    {"source_code_bytes", &ResourceShaderState::source_code_bytes},
+    {"variant_spirv_bytes", &ResourceShaderState::variant_spirv_bytes},
+    {"disk_cache_hits", &ResourceShaderState::disk_cache_hits},
+    {"disk_cache_misses", &ResourceShaderState::disk_cache_misses},
+    {"disk_cache_writes", &ResourceShaderState::disk_cache_writes},
+    {"disk_cache_load_failures", &ResourceShaderState::disk_cache_load_failures},
+    {"disk_cache_write_failures", &ResourceShaderState::disk_cache_write_failures},
+    {"preparation_queue_pending", &ResourceShaderState::preparation_queue_pending},
+    {"preparation_active", &ResourceShaderState::preparation_active},
+    {"pipeline_builds_active", &ResourceShaderState::pipeline_builds_active},
+    {"pipeline_builds_completed", &ResourceShaderState::pipeline_builds_completed},
+    {"pipeline_optimization_queue_pending", &ResourceShaderState::pipeline_optimization_queue_pending},
+    {"pipeline_optimizations_active", &ResourceShaderState::pipeline_optimizations_active}
+};
+
+constexpr std::pair<const char*, std::optional<std::uint64_t> ResourceMemoryState::*> resource_memory_fields[] = {
+    {"process_rss_bytes", &ResourceMemoryState::process_rss_bytes},
+    {"process_rss_timestamp_us", &ResourceMemoryState::process_rss_timestamp_us},
+    {"sampled_cache_bytes", &ResourceMemoryState::sampled_cache_bytes},
+    {"sampled_cache_budget_bytes", &ResourceMemoryState::sampled_cache_budget_bytes},
+    {"storage_cache_bytes", &ResourceMemoryState::storage_cache_bytes},
+    {"storage_cache_budget_bytes", &ResourceMemoryState::storage_cache_budget_bytes},
+    {"gpu_heap_usage_bytes", &ResourceMemoryState::gpu_heap_usage_bytes},
+    {"gpu_heap_budget_bytes", &ResourceMemoryState::gpu_heap_budget_bytes},
+    {"gpu_heap_timestamp_us", &ResourceMemoryState::gpu_heap_timestamp_us}
+};
 
 struct ObjectUnref {
     void operator()(gpointer object) const { if (object) g_object_unref(object); }
@@ -97,6 +129,19 @@ std::uint64_t unsigned_member(JsonObject* object, const char* name) {
     return static_cast<std::uint64_t>(value);
 }
 
+std::optional<std::uint64_t> nullable_unsigned_member(JsonObject* object, const char* name) {
+    auto* node = json_object_get_member(object, name);
+    if (node && JSON_NODE_HOLDS_NULL(node)) return {};
+    return unsigned_member(object, name);
+}
+
+JsonObject* object_member(JsonObject* object, const char* name) {
+    auto* node = json_object_get_member(object, name);
+    if (!node || !JSON_NODE_HOLDS_OBJECT(node))
+        throw std::runtime_error(std::string("Expected object: ") + name);
+    return json_node_get_object(node);
+}
+
 bool boolean_member(JsonObject* object, const char* name) {
     auto* node = json_object_get_member(object, name);
     if (!node || !JSON_NODE_HOLDS_VALUE(node) || json_node_get_value_type(node) != G_TYPE_BOOLEAN)
@@ -128,6 +173,30 @@ MonitoringSample timing_sample(JsonObject* object, JsonObject* data) {
         sample.flip_interval_us = unsigned_member(data, "flip_interval_us");
         if (!*sample.flip_interval_us) throw std::runtime_error("Expected a positive flip interval");
     }
+    return sample;
+}
+
+ResourceSample resource_sample(JsonObject* data) {
+    ResourceSample sample;
+    sample.timestamp_us = unsigned_member(data, "timestamp_us");
+    sample.monitoring_epoch = unsigned_member(data, "monitoring_epoch");
+    auto* shaders = object_member(data, "shaders");
+    for (const auto& [name, field] : resource_shader_fields)
+        sample.shaders.*field = unsigned_member(shaders, name);
+    auto* memory = object_member(data, "memory");
+    for (const auto& [name, field] : resource_memory_fields)
+        sample.memory.*field = nullable_unsigned_member(memory, name);
+    const auto& values = sample.memory;
+    if (values.process_rss_bytes.has_value() != values.process_rss_timestamp_us.has_value())
+        throw std::runtime_error("RSS bytes and timestamp must be available together");
+    const bool any_heap = values.gpu_heap_usage_bytes || values.gpu_heap_budget_bytes || values.gpu_heap_timestamp_us;
+    if (any_heap && !(values.gpu_heap_usage_bytes && values.gpu_heap_budget_bytes && values.gpu_heap_timestamp_us))
+        throw std::runtime_error("GPU heap usage, budget and timestamp must be available together");
+    for (const auto& budget : {values.sampled_cache_budget_bytes, values.storage_cache_budget_bytes, values.gpu_heap_budget_bytes})
+        if (budget && !*budget) throw std::runtime_error("An unavailable memory budget must be null");
+    for (const auto& timestamp : {values.process_rss_timestamp_us, values.gpu_heap_timestamp_us})
+        if (timestamp && *timestamp > sample.timestamp_us)
+            throw std::runtime_error("Memory source timestamp exceeds the resource timestamp");
     return sample;
 }
 
@@ -194,6 +263,8 @@ struct BridgeServer::Impl {
     bool monitoring_truncated = false;
     Clock::time_point last_sample;
     std::deque<MonitoringSample> monitoring_samples;
+    Clock::time_point last_resource;
+    std::optional<ResourceSample> resource;
 
     explicit Impl(std::uint16_t port) {
         GError* error = nullptr;
@@ -249,6 +320,7 @@ struct BridgeServer::Impl {
 
     void clear_monitoring() {
         monitoring_samples.clear();
+        resource.reset();
         monitoring_baseline_known = false;
         monitoring_truncated = false;
         monitoring_drops = 0;
@@ -311,6 +383,18 @@ struct BridgeServer::Impl {
         }
     }
 
+    void accept_resource(ResourceSample sample) {
+        if (!capabilities.contains("set_monitoring") || !capabilities.contains("resource_status"))
+            throw std::runtime_error("Unadvertised resource stream");
+        if (monitoring_known && (sample.monitoring_epoch < monitoring_epoch ||
+            (sample.monitoring_epoch == monitoring_epoch && !monitoring_enabled))) return;
+        if (resource && sample.monitoring_epoch == resource->monitoring_epoch && sample.timestamp_us <= resource->timestamp_us)
+            throw std::runtime_error("Resource source timestamp is not increasing");
+        update_monitoring(true, sample.monitoring_epoch);
+        resource = std::move(sample);
+        last_resource = Clock::now();
+    }
+
     void add_event(JsonNode* packet) {
         NodePtr copy(json_node_copy(packet));
         const auto id = ++event_id;
@@ -354,6 +438,7 @@ struct BridgeServer::Impl {
         std::string result;
         std::string failure;
         std::optional<MonitoringSample> sample;
+        std::optional<ResourceSample> resource_update;
         std::optional<std::pair<bool, std::uint64_t>> monitoring;
         if (type == "hello" || type == "heartbeat") monitoring = monitoring_member(object);
         if (type == "hello") {
@@ -376,6 +461,10 @@ struct BridgeServer::Impl {
             auto* data = json_object_get_member(object, "data");
             if (!data || !JSON_NODE_HOLDS_OBJECT(data)) throw std::runtime_error("Expected event data object");
             if (name == "frame_timing") sample = timing_sample(object, json_node_get_object(data));
+            else if (name == "resource_status") {
+                if (has_frame) throw std::runtime_error("Resource status has no frame correlation");
+                resource_update = resource_sample(json_node_get_object(data));
+            }
         } else if (type == "command_received" || type == "command_completed" || type == "command_failed") {
             command_id = string_member(object, "command_id", 128);
             if (json_object_has_member(object, "result")) {
@@ -412,6 +501,7 @@ struct BridgeServer::Impl {
         const bool old_sequence = sequence_initialized && sequence <= incoming_sequence;
         if (monitoring && !old_sequence) update_monitoring(monitoring->first, monitoring->second);
         if (sample && !old_sequence) accept_sample(std::move(*sample));
+        if (resource_update && !old_sequence) accept_resource(std::move(*resource_update));
         if (type == "command_completed") {
             const auto found = std::find_if(commands.begin(), commands.end(), [&](const Command& command) {
                 return command.id == command_id && command.session_id == session && command.name == "set_monitoring" && pending(command.state);
@@ -715,6 +805,27 @@ MonitoringSnapshot BridgeServer::monitoring_snapshot() const {
         snapshot.stats.sender_dropped_samples = impl_->monitoring_drops;
         if (!snapshot.samples.empty())
             snapshot.age_ms = std::chrono::duration<double, std::milli>(Clock::now() - impl_->last_sample).count();
+        snapshot.resources.supported = impl_->capabilities.contains("resource_status");
+        snapshot.resources.sample = impl_->resource;
+        if (impl_->resource)
+            snapshot.resources.age_ms = std::chrono::duration<double, std::milli>(Clock::now() - impl_->last_resource).count();
+    }
+    auto& resources = snapshot.resources;
+    resources.has_sample = resources.sample.has_value();
+    resources.stale = resources.has_sample && (!snapshot.connected || !resources.supported || !snapshot.enabled ||
+        *resources.age_ms >= resource_stale_ms);
+    if (!snapshot.connected) resources.state = "disconnected";
+    else if (!resources.supported) resources.state = "unsupported";
+    else if (!snapshot.enabled) resources.state = "disabled";
+    else if (!resources.has_sample) resources.state = "waiting";
+    else resources.state = resources.stale ? "stale" : "active";
+    if (resources.sample) {
+        const auto source_age = [&](const std::optional<std::uint64_t>& timestamp) -> std::optional<double> {
+            if (!timestamp) return {};
+            return *resources.age_ms + static_cast<double>(resources.sample->timestamp_us - *timestamp) / 1000.0;
+        };
+        resources.process_rss_age_ms = source_age(resources.sample->memory.process_rss_timestamp_us);
+        resources.gpu_heap_age_ms = source_age(resources.sample->memory.gpu_heap_timestamp_us);
     }
     snapshot.has_frames = !snapshot.samples.empty();
     snapshot.stale = snapshot.has_frames && (!snapshot.connected || !snapshot.enabled || *snapshot.age_ms >= 1000.0);
@@ -782,6 +893,57 @@ std::string BridgeServer::monitoring_snapshot_json(bool include_history) const {
     };
     number(object, "age_ms", snapshot.age_ms);
     json_object_set_int_member(object, "monitoring_epoch", snapshot.monitoring_epoch);
+    auto* resources = json_object_new();
+    const auto& resource = snapshot.resources;
+    json_object_set_boolean_member(resources, "supported", resource.supported);
+    json_object_set_boolean_member(resources, "has_sample", resource.has_sample);
+    json_object_set_boolean_member(resources, "stale", resource.stale);
+    json_object_set_string_member(resources, "state", resource.state.c_str());
+    number(resources, "age_ms", resource.age_ms);
+    number(resources, "process_rss_age_ms", resource.process_rss_age_ms);
+    number(resources, "gpu_heap_age_ms", resource.gpu_heap_age_ms);
+    json_object_set_int_member(resources, "stale_after_ms", static_cast<std::int64_t>(resource_stale_ms));
+    if (resource.sample) {
+        const auto& sample = *resource.sample;
+        json_object_set_int_member(resources, "timestamp_us", sample.timestamp_us);
+        json_object_set_int_member(resources, "monitoring_epoch", sample.monitoring_epoch);
+        auto* shaders = json_object_new();
+        for (const auto& [name, field] : resource_shader_fields)
+            json_object_set_int_member(shaders, name, sample.shaders.*field);
+        json_object_set_object_member(resources, "shaders", shaders);
+        auto* memory = json_object_new();
+        for (const auto& [name, field] : resource_memory_fields) {
+            const auto& value = sample.memory.*field;
+            if (value) json_object_set_int_member(memory, name, *value);
+            else json_object_set_null_member(memory, name);
+        }
+        json_object_set_object_member(resources, "memory", memory);
+    } else {
+        for (const auto* name : {"timestamp_us", "monitoring_epoch", "shaders", "memory"})
+            json_object_set_null_member(resources, name);
+    }
+    auto* resource_scope = json_object_new();
+    for (const auto& [name, value] : std::initializer_list<std::pair<const char*, const char*>>{
+        {"snapshot", "runtime_process_resources_independent_of_videoout"},
+        {"shader_counters", "process_lifetime"},
+        {"shader_gauges", "latest_sample"},
+        {"shader_bytes", "retained_cpu_source_and_variant_spirv_excluding_ir_metadata_gpu_memory"},
+        {"preparation_queue", "jobs_not_variants"},
+        {"pipeline_builds", "vulkan_pipeline_calls_not_backend_shader_compilation"},
+        {"pipeline_optimization_queue", "pending_excludes_active"},
+        {"cache_memory", "runtime_cache_allocation_accounting_not_physical_vram"},
+        {"gpu_heap", "largest_device_local_heap_driver_reported_estimate"},
+        {"process_rss", "linux_process_resident_set"}})
+        json_object_set_string_member(resource_scope, name, value);
+    json_object_set_object_member(resources, "scope", resource_scope);
+    auto* resource_units = json_object_new();
+    json_object_set_string_member(resource_units, "bytes", "bytes");
+    json_object_set_string_member(resource_units, "counts", "count");
+    json_object_set_string_member(resource_units, "timestamps", "monotonic_microseconds");
+    json_object_set_string_member(resource_units, "age_ms", "milliseconds_since_local_receipt");
+    json_object_set_string_member(resource_units, "source_age_ms", "source_timestamp_gap_plus_milliseconds_since_local_receipt");
+    json_object_set_object_member(resources, "units", resource_units);
+    json_object_set_object_member(object, "resources", resources);
     auto* scope = json_object_new();
     json_object_set_string_member(scope, "metric", "completed_main_videoout_flip_interval");
     json_object_set_string_member(scope, "frame_semantics", "runtime_global_correlation_id_not_simulation_tick");

@@ -7,13 +7,13 @@ Additional attribution terms: see NOTICE in the repository root.
 
 # Debug bridge and MCP
 
-FrameRift implements the receiving/command side of an optional runtime bridge. A loopback UDP worker receives events independently of GTK rendering. A local MCP server exposes those events, normalized frame-pacing measurements and asynchronous commands. A bridge-enabled AnyPS5 build provides frame monitoring; input execution and screenshot capture remain separate work.
+FrameRift implements the receiving/command side of an optional runtime bridge. A loopback UDP worker receives events independently of GTK rendering. A local MCP server exposes those events, normalized frame-pacing and resource measurements, and asynchronous commands. A bridge-enabled AnyPS5 build provides frame, shader and memory monitoring; input execution and screenshot capture remain separate work.
 
 ## Current capabilities
 
 The running FrameRift app exposes ten MCP tools. Library listing, managed game start/stop, asynchronous process status and recent log lines use the same game lifecycle as the UI. These five tools do not require a connected game bridge. Process output continues into complete session log files.
 
-The bridge tools expose connection state, buffered events, asynchronous command receipt/completion and a normalized monitoring snapshot shared with the Live UI. AnyPS5 advertises `set_monitoring`; monitoring starts off and emits main-output frame summaries when activated. A connection alone does not prove rendering progress. The current adapter cannot apply automated inputs or capture frames, and FrameRift neither stores input scripts nor offers script-list/run tools.
+The bridge tools expose connection state, buffered events, asynchronous command receipt/completion and a normalized monitoring snapshot shared with the Live UI. AnyPS5 advertises `set_monitoring` and `resource_status`; monitoring starts off and emits main-output frame summaries plus shader/memory state when activated. A connection alone does not prove rendering progress. The current adapter cannot apply automated inputs or capture frames, and FrameRift neither stores input scripts nor offers script-list/run tools.
 
 The larger profiler design, saved measurement snapshots, durable game scripts and future script MCP tools are specified separately in [Profiler workspace and game input scripts](profiler-workspace.md). Its ImageGen references include later functionality beyond the current frame-pacing dashboard.
 
@@ -45,7 +45,7 @@ Configure AnyPS5 with `-DANYPS5_ENABLE_DEBUG_BRIDGE=ON` and rebuild its patched 
 
 One independent thread owns a persistent nonblocking UDP socket. It sends `hello`, one-second heartbeats and periodic repeated `hello` packets, receives monitoring commands and sends queued measurements. Normal runtime shutdown sends a best-effort `goodbye`; forced termination uses the existing disconnect/timeout behavior. A missing receiver does not stop the game or alter its default logs.
 
-The adapter advertises `capabilities: ["set_monitoring"]`. Send `set_monitoring` with `{ "enabled": true }` to activate collection, or `false` to stop it. Command receipt is distinct from completion; hello/heartbeat monitoring state also confirms the current enabled state and epoch. Input and capture commands remain unavailable. Older connection-only builds with no capability remain supported and show monitoring as unavailable.
+The adapter advertises `capabilities: ["set_monitoring", "resource_status"]`. Send `set_monitoring` with `{ "enabled": true }` to activate collection, or `false` to stop it. Command receipt is distinct from completion; hello/heartbeat monitoring state also confirms the current enabled state and epoch. `resource_status` advertises an event source, not a command. Input and capture commands remain unavailable. Older connection-only builds show monitoring as unavailable; frame-only builds continue to work with unavailable resources.
 
 Collection does not require `APS5_ENABLE_TIMING_LOG`, `APS5_PROFILE_DRAW` or `APS5_PROFILE_GPU`. Default file logging keeps its existing behavior. The presentation thread publishes a fixed-size sample to a bounded nonblocking queue after a successful main-output flip; closed/cancelled requests do not count. The bridge worker handles formatting and transport. Saturation drops measurements rather than delaying frame completion.
 
@@ -65,7 +65,7 @@ POST requests use `Content-Type: application/json` and `Accept: application/json
 | `get_game_status` | `{}` | Current/last managed session state, IDs, log paths, exit status and error |
 | `get_game_log` | `{ "lines": 5 }` | Last requested log lines; defaults to 5, maximum 200 |
 | `get_bridge_status` | `{}` | Connection, session/game IDs, UDP port, frame, capabilities and counters |
-| `get_monitoring_snapshot` | `{ "include_history": false }` | Shared Live measurements, latest/worst frame, scope, freshness and completeness; optional bounded history |
+| `get_monitoring_snapshot` | `{ "include_history": false }` | Shared Live frame measurements and latest resources, scopes, independent freshness and completeness; optional bounded frame history |
 | `get_events` | `{ "after": 0, "limit": 100 }` | Events after a local cursor; limit 1–100, immediately returns available data |
 | `send_command` | `{ "name": "set_monitoring", "args": { "enabled": true } }` | Command ID and initial `pending` status |
 | `get_command` | `{ "command_id": "<returned ID>" }` | Latest status, attempts, optional result/error |
@@ -132,6 +132,30 @@ The normalized `frame_timing` contract uses integer microseconds from the game m
 
 Hello and heartbeats carry `monitoring: { "enabled": false, "epoch": 0 }` with the current state. `set_monitoring` completion reports the same fields in `result`, using `epoch`. This periodic state report also makes a lost completion observable. Other metric names/units remain adapter-defined. No log parsing or synthetic measurements occur here. `goodbye` explicitly disconnects; it uses the same envelope as a heartbeat with `type` changed.
 
+### Shader and memory resources
+
+`resource_status` uses the event envelope above with `name: "resource_status"`, no root `frame`, and the following `data` groups:
+
+| Group | Fields | Scope |
+| --- | --- | --- |
+| Root | `timestamp_us`, `monitoring_epoch` | Bridge worker monotonic sample time and confirmed monitoring epoch |
+| `shaders` | `translations_active`, `translations_completed` | Front-end RDNA-to-IR preparation and backend SPIR-V emission operations; a first variant can complete two operations, and short completed work remains observable |
+| `shaders` | `preparation_queue_pending`, `preparation_active` | Waiting and running registration-preparation jobs; one job can prepare several variants or load cache entries |
+| `shaders` | `cached_variants_count`, `source_code_bytes`, `variant_spirv_bytes` | Source-cache retained compiled variants and copied guest-code/SPIR-V payload; excludes IR, metadata, temporary allocations and native driver memory |
+| `shaders` | `disk_cache_hits`, `disk_cache_misses`, `disk_cache_writes`, `disk_cache_load_failures`, `disk_cache_write_failures` | Cumulative process-lifetime shader disk-cache operations |
+| `shaders` | `pipeline_builds_active`, `pipeline_builds_completed`, `pipeline_optimization_queue_pending`, `pipeline_optimizations_active` | Game graphics/compute Vulkan pipeline-creation calls and separate waiting/running optimization jobs; does not prove native backend shader compilation |
+| `memory` | `process_rss_bytes`, `process_rss_timestamp_us` | Linux process resident-set sample, at most once per second; unavailable on Windows in this increment |
+| `memory` | `sampled_cache_bytes`, `sampled_cache_budget_bytes`, `storage_cache_bytes`, `storage_cache_budget_bytes` | Existing texture-cache allocation/accounting bytes and their budgets; not total physical VRAM |
+| `memory` | `gpu_heap_usage_bytes`, `gpu_heap_budget_bytes`, `gpu_heap_timestamp_us` | Last existing driver query for the largest device-local heap, with its own sample time |
+
+All counts/bytes/timestamps are unsigned integers; timestamps use microseconds. Memory fields can be `null` when unavailable. RSS value/time are paired; heap value/budget/time are paired. A cache can have known bytes with an unavailable budget. Shader totals are process-lifetime counters and are not reset by monitoring epochs; active jobs, pending jobs, retained counts and bytes are gauges.
+
+The Vulkan heap usage and budget are driver estimates for the current process, not system-wide GPU utilization or a promise of allocation capacity. See [Vulkan memory-budget semantics](https://docs.vulkan.org/refpages/latest/refpages/source/VkPhysicalDeviceMemoryBudgetPropertiesEXT.html). Cache accounting and shader CPU payload are separate scopes and must not be summed into a total RAM/VRAM figure.
+
+Producers update fixed atomic counters/gauges at preparation, translation, pipeline and cache boundaries. They never serialize packets or wait for delivery. The bridge worker sends an initial full resource state on activation, coalesces changes at up to four updates per second and refreshes the full state every five seconds. It samples RSS outside rendering threads; GPU values reuse existing budget queries. Resources can arrive while no frames complete. Bookkeeping in a bridge-enabled build continues while monitoring is off so activation reports the existing cache; ordinary bridge-disabled builds omit these hooks.
+
+`get_monitoring_snapshot.resources` contains the latest normalized state, availability, scope, units and its own receipt age. Ten seconds without a resource event marks that observation stale. RSS/heap source ages remain separate: periodically resending a cached heap value does not make that driver sample new. The Live resource panel always describes the latest resource sample, including while a frame is selected for inspection. OFF/disconnect retains the last resource state; a new session or activation epoch clears it. A VideoOut generation change resets frame history without clearing process resources.
+
 FrameRift sends commands asynchronously from the UDP worker:
 
 ```json
@@ -142,7 +166,7 @@ The runtime acknowledges **receipt** separately from completion:
 
 ```json
 {"protocol":"framerift.bridge","version":1,"type":"command_received","session_id":"session-123","sequence":4,"command_id":"<UUID>"}
-{"protocol":"framerift.bridge","version":1,"type":"command_completed","session_id":"session-123","sequence":5,"command_id":"<UUID>","result":{"enabled":true}}
+{"protocol":"framerift.bridge","version":1,"type":"command_completed","session_id":"session-123","sequence":5,"command_id":"<UUID>","result":{"enabled":true,"epoch":1}}
 ```
 
 Failure uses `type: "command_failed"` and an optional `error` string of at most 1024 bytes. `result`, when present, is an object. Receipt means the runtime accepted responsibility for the command; it does not mean input was applied or a screenshot was captured.
@@ -159,4 +183,4 @@ At most 64 commands can await receipt/completion, with 128 command records retai
 
 For input automation, the intended runtime contract is to upload a whole sequence before it starts: an optional absolute start frame such as `500`, followed by offsets such as `+20` relative to the previous **planned** action, with explicit button down/up. Omitting a start uses the next available input boundary after acceptance, as specified in the [script design](profiler-workspace.md). FrameRift can forward a sequence in `schedule_inputs.args` when a runtime advertises support; it does not interpret those offsets or execute inputs. The current adapter advertises no input support. Screenshot commands likewise require future runtime support; image transfer is not implemented.
 
-The native `debug_bridge` check exchanges actual UDP packets and HTTP MCP requests with a mock runtime. `game_mcp` checks library queries, managed start/stop, preparation errors and log tails using temporary game/runtime fixtures. AnyPS5's checks exercise actual loopback datagrams, monitoring state/deduplication, queue overflow, liveness, shutdown, disabled/invalid configuration and real main-output flips under a native display. A live Bomberman run verified frame measurements, on/off commands and retained stale data while heartbeats continued after rendering stopped. This is functional verification; monitoring overhead and gameplay compatibility have not been benchmarked. End-to-end input/screenshot checks belong to later capabilities.
+The native `debug_bridge` check exchanges actual UDP packets and HTTP MCP requests with a mock runtime, including malformed/reordered resources and independent resource freshness. `game_mcp` checks library queries, managed start/stop, preparation errors and log tails using temporary game/runtime fixtures. AnyPS5's checks exercise loopback datagrams, resource coalescing, concurrent producers, real RDNA/SPIR-V payload accounting, monitoring state/deduplication, queue overflow, liveness, shutdown and disabled/invalid configuration. A native X11 check verifies real main-output flips. A live Bomberman run verified frame and resource measurements, on/off commands, retained observations and process counters across activation epochs. Shader and RSS updates arrived during compilation before new frames were available; the game subsequently rendered normally. A bridge-disabled compilation of the changed recompiler contains no bridge references. This is functional verification; monitoring overhead has not been benchmarked. End-to-end input/screenshot checks belong to later capabilities.

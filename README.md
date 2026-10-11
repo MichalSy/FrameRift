@@ -17,7 +17,7 @@ FrameRift is an experimental native game library and runtime console for AnyPS5.
 
 - Automatic game-folder scanning, metadata titles, search, sorting and recently played games.
 - SteamGridDB artwork, an offline SQLite/image cache and animated WebP heroes; API credentials stay in the desktop keyring.
-- Linux launch and rebuild, plus Profiler Live/Logs views with estimated FPS, flip-interval statistics, selected-frame details, a bounded 60-second history and complete session logs. Original games, saves and shared runtime libraries are preserved.
+- Linux launch and rebuild, plus Profiler Live/Logs views with estimated FPS, flip-interval statistics, selected-frame details, a bounded 60-second history, shader activity/cache counters, scoped memory values and complete session logs. Original games, saves and shared runtime libraries are preserved.
 - A local UDP debug bridge and HTTP MCP server for runtime events, normalized monitoring snapshots, library listing, game start/stop, recent log lines and asynchronous bridge commands. A bridge-enabled AnyPS5 build supports switching frame monitoring on/off independently of its existing file logs.
 
 Windows, actual gameplay compatibility and embedded game windows remain unverified. Detailed CPU/GPU analysis and controller navigation are planned.
@@ -39,7 +39,7 @@ While FrameRift is open, MCP clients can use `http://127.0.0.1:47653/mcp` with S
 
 For Codex, register the running app with `codex mcp add framerift --url http://127.0.0.1:47653/mcp`. The game tools use the same guarded launcher as the UI and do not require a UDP adapter.
 
-Current MCP tools list library games, start/stop the managed game, report its status, read the last five log lines by default, and expose monitoring values and UDP events/command state. The [profiler workspace and game-script design](docs/profiler-workspace.md) specifies the remaining CPU/GPU detail, saved measurement snapshots, screenshots and saved scripts. Those later features and script MCP tools remain unimplemented.
+Current MCP tools list library games, start/stop the managed game, report its status, read the last five log lines by default, and expose frame/shader/memory monitoring values and UDP events/command state. The [profiler workspace and game-script design](docs/profiler-workspace.md) specifies the remaining CPU/GPU detail, saved measurement snapshots, screenshots and saved scripts. Those later features and script MCP tools remain unimplemented.
 
 For local development, point the desktop menu entry at this checkout's `build/framerift`; rebuilding updates the executable used by the launcher. For packaged installations on Linux, `cmake --install build` installs the app, desktop menu entry and icon under the configured prefix. Generated code uses the user cache; saves and session logs use the shared FrameRift data directory, keyed by game ID.
 

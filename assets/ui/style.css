@@ -84,3 +84,13 @@ button { box-shadow: none; text-shadow: none; }
 .frame-picker > button { background: #122c3b; border: 1px solid #345568; border-radius: 4px; padding: 5px 12px; }
 .frame-value { font-size: 19px; font-weight: 600; color: #f0f6fa; }
 .monitor-frame-scope, .monitor-chart-hint { font-size: 11px; color: #8fa8bc; }
+.resource-row > flowboxchild { padding: 0; border: none; background: transparent; }
+.resource-label { font-size: 12px; color: #adc5d6; }
+.resource-value { font-size: 12px; font-weight: 600; color: #e6f0f7; }
+.resource-state, .resource-scope { font-size: 11px; color: #8fa8bc; }
+.resource-panel.stale .resource-value, .resource-value.stale { color: #b8a47c; }
+.resource-panel.stale .resource-state, .resource-panel.stale .resource-scope { color: #b8a47c; }
+.resource-gauge trough { min-height: 4px; border: none; background: #203846; border-radius: 2px; }
+.resource-gauge progress { min-height: 4px; border: none; background: #00bdd5; border-radius: 2px; }
+.resource-gauge.over-budget progress { background: #e4ac5a; }
+.resource-panel.stale .resource-gauge, .resource-gauge.stale { opacity: .5; }

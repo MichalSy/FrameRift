@@ -205,6 +205,29 @@ std::string timing(std::uint64_t sequence, std::uint64_t frame, std::uint64_t co
         ",\"dropped_samples\":" + std::to_string(drops) + "}");
 }
 
+std::string resources(std::uint64_t sequence, std::uint64_t timestamp, std::uint64_t epoch = 1,
+    std::uint64_t active = 2, const std::string& memory = R"({"process_rss_bytes":1024,"process_rss_timestamp_us":9000000,"sampled_cache_bytes":100,"sampled_cache_budget_bytes":null,"storage_cache_bytes":0,"storage_cache_budget_bytes":1024,"gpu_heap_usage_bytes":500,"gpu_heap_budget_bytes":1000,"gpu_heap_timestamp_us":8000000})") {
+    return packet(sequence, "event", ",\"name\":\"resource_status\",\"data\":{\"timestamp_us\":" +
+        std::to_string(timestamp) + ",\"monitoring_epoch\":" + std::to_string(epoch) +
+        ",\"shaders\":{\"translations_active\":" + std::to_string(active) +
+        R"(,"translations_completed":9,"cached_variants_count":4,"source_code_bytes":4096,"variant_spirv_bytes":8192,"disk_cache_hits":5,"disk_cache_misses":2,"disk_cache_writes":1,"disk_cache_load_failures":0,"disk_cache_write_failures":0,"preparation_queue_pending":3,"preparation_active":1,"pipeline_builds_active":0,"pipeline_builds_completed":7,"pipeline_optimization_queue_pending":2,"pipeline_optimizations_active":1},"memory":)" + memory + "}");
+}
+
+template <typename Change>
+std::string changed(const std::string& text, Change change) {
+    const Json json(text);
+    change(json.object());
+    Object<JsonGenerator> generator(json_generator_new());
+    auto* root = json_node_new(JSON_NODE_OBJECT);
+    json_node_set_object(root, json.object());
+    json_generator_set_root(generator.get(), root);
+    auto* encoded = json_generator_to_data(generator.get(), nullptr);
+    std::string result(encoded);
+    g_free(encoded);
+    json_node_unref(root);
+    return result;
+}
+
 void near(const std::optional<double>& value, double expected, const char* failure) {
     require(value && std::abs(*value - expected) < 0.000001, failure);
 }
@@ -374,6 +397,165 @@ void check_monitoring() {
         "A new managed session inherited old monitoring history or frame identity");
 }
 
+void check_resources() {
+    framerift::BridgeServer bridge(0);
+    Runtime runtime(bridge.port());
+    Runtime stranger(bridge.port());
+    framerift::McpServer mcp(bridge, 0);
+    bridge.expect_session("bridge-check-session", "PPSA01234");
+    std::uint64_t sequence = 1;
+    const std::string hello = ",\"game_id\":\"PPSA01234\",\"capabilities\":[\"set_monitoring\",\"resource_status\"]";
+    runtime.send(packet(sequence, "hello", ",\"game_id\":\"PPSA01234\",\"capabilities\":[\"set_monitoring\"],\"monitoring\":{\"enabled\":true,\"epoch\":1}"));
+    wait_until([&] { return bridge.status().connected; }, "The resource runtime did not connect");
+    auto snapshot = bridge.monitoring_snapshot();
+    require(!snapshot.resources.supported && !snapshot.resources.has_sample && snapshot.resources.state == "unsupported",
+        "An older frame-only runtime advertised nonexistent resource support");
+    auto malformed = bridge.status().malformed_packets;
+    runtime.send(resources(++sequence, 10000000));
+    wait_until([&] { return bridge.status().malformed_packets > malformed; }, "An unadvertised resource stream was accepted");
+    runtime.send(packet(++sequence, "hello", hello + ",\"monitoring\":{\"enabled\":false,\"epoch\":2}"));
+    wait_until([&] { return bridge.monitoring_snapshot().resources.supported; }, "Resource capability was not recorded");
+    runtime.send(resources(++sequence, 10000000, 2));
+    runtime.send(packet(++sequence, "heartbeat", ",\"monitoring\":{\"enabled\":true,\"epoch\":3}"));
+    wait_until([&] { return bridge.monitoring_snapshot().monitoring_epoch == 3; }, "Resource activation was not confirmed");
+    require(!bridge.monitoring_snapshot().resources.has_sample && bridge.monitoring_snapshot().resources.state == "waiting",
+        "Disabled resource traffic became a measurement");
+    runtime.send(resources(++sequence, 10000000, 3));
+    wait_until([&] { return bridge.monitoring_snapshot().resources.has_sample; }, "A valid resource snapshot was not normalized");
+    snapshot = bridge.monitoring_snapshot();
+    require(snapshot.resources.state == "active" && !snapshot.resources.stale && !snapshot.has_frames && !bridge.status().has_frame &&
+        snapshot.resources.sample->shaders.translations_completed == 9 && snapshot.resources.sample->shaders.source_code_bytes == 4096 &&
+        snapshot.resources.sample->memory.process_rss_bytes == 1024 && !snapshot.resources.sample->memory.sampled_cache_budget_bytes,
+        "Resource data required a frame, fabricated frame zero or lost typed values");
+    near(snapshot.resources.process_rss_age_ms, *snapshot.resources.age_ms + 1000.0, "RSS freshness ignored its own source timestamp");
+    near(snapshot.resources.gpu_heap_age_ms, *snapshot.resources.age_ms + 2000.0, "GPU heap freshness ignored its own source timestamp");
+    const Json queried(request(mcp.endpoint(), R"({"jsonrpc":"2.0","id":40,"method":"tools/call","params":{"name":"get_monitoring_snapshot","arguments":{}}})").body);
+    auto* result = tool_result(queried);
+    auto* resource = json_object_get_object_member(result, "resources");
+    require(resource && json_object_get_boolean_member(resource, "has_sample") && member(resource, "state") == "active" &&
+        json_object_get_int_member(json_object_get_object_member(resource, "shaders"), "variant_spirv_bytes") == 8192 &&
+        JSON_NODE_HOLDS_NULL(json_object_get_member(json_object_get_object_member(resource, "memory"), "sampled_cache_budget_bytes")) &&
+        JSON_NODE_HOLDS_NULL(json_object_get_member(result, "latest_frame")) && !json_object_has_member(result, "chart_samples"),
+        "Compact MCP omitted resources, converted unknown memory to zero or fabricated a frame");
+    runtime.send(timing(++sequence, 500, 1, 10000000, "null", 3));
+    runtime.send(timing(++sequence, 501, 2, 10010000, "10000", 3));
+    wait_until([&] { return bridge.monitoring_snapshot().samples.size() == 2; }, "Frames alongside resources were not accepted");
+    wait_until([&] { return bridge.monitoring_snapshot().stale; }, "Resource test frame freshness did not expire");
+    runtime.send(resources(++sequence, 12000000, 3));
+    wait_until([&] { return bridge.monitoring_snapshot().resources.sample->timestamp_us == 12000000; }, "Periodic resource refresh was not accepted");
+    snapshot = bridge.monitoring_snapshot();
+    require(snapshot.stale && !snapshot.resources.stale && snapshot.resources.state == "active" && bridge.status().frame == 501 &&
+        snapshot.samples.size() == 2, "Resource freshness refreshed stale frame timing or changed frame identity");
+    near(snapshot.stats.estimated_fps, 100.0, "Resource traffic changed source-time FPS");
+    near(snapshot.resources.gpu_heap_age_ms, *snapshot.resources.age_ms + 4000.0, "Resource refresh hid an older heap sample");
+
+    malformed = bridge.status().malformed_packets;
+    runtime.send(resources(sequence, 14000000, 3));
+    stranger.send(resources(++sequence, 14000000, 3));
+    runtime.send(changed(resources(++sequence, 14000000, 3), [](JsonObject* object) {
+        json_object_set_string_member(object, "session_id", "wrong-session");
+    }));
+    runtime.send(resources(++sequence, 12000000, 3));
+    runtime.send(resources(++sequence, 11999999, 3));
+    runtime.send(changed(resources(++sequence, 14000000, 3), [](JsonObject* object) {
+        json_object_set_int_member(object, "frame", 999);
+    }));
+    runtime.send(changed(resources(++sequence, 14000000, 3), [](JsonObject* object) {
+        auto* data = json_object_get_object_member(object, "data");
+        json_object_remove_member(json_object_get_object_member(data, "shaders"), "disk_cache_hits");
+    }));
+    runtime.send(changed(resources(++sequence, 14000000, 3), [](JsonObject* object) {
+        auto* shaders = json_object_get_object_member(json_object_get_object_member(object, "data"), "shaders");
+        json_object_set_int_member(shaders, "translations_active", -1);
+    }));
+    runtime.send(changed(resources(++sequence, 14000000, 3), [](JsonObject* object) {
+        auto* shaders = json_object_get_object_member(json_object_get_object_member(object, "data"), "shaders");
+        json_object_set_double_member(shaders, "translations_completed", 1.5);
+    }));
+    runtime.send(changed(resources(++sequence, 14000000, 3), [](JsonObject* object) {
+        auto* memory = json_object_get_object_member(json_object_get_object_member(object, "data"), "memory");
+        json_object_set_string_member(memory, "storage_cache_bytes", "100");
+    }));
+    runtime.send(changed(resources(++sequence, 14000000, 3), [](JsonObject* object) {
+        auto* memory = json_object_get_object_member(json_object_get_object_member(object, "data"), "memory");
+        json_object_set_null_member(memory, "process_rss_timestamp_us");
+    }));
+    runtime.send(changed(resources(++sequence, 14000000, 3), [](JsonObject* object) {
+        auto* memory = json_object_get_object_member(json_object_get_object_member(object, "data"), "memory");
+        json_object_set_int_member(memory, "process_rss_timestamp_us", 14000001);
+    }));
+    runtime.send(changed(resources(++sequence, 14000000, 3), [](JsonObject* object) {
+        auto* memory = json_object_get_object_member(json_object_get_object_member(object, "data"), "memory");
+        json_object_set_null_member(memory, "gpu_heap_budget_bytes");
+    }));
+    runtime.send(changed(resources(++sequence, 14000000, 3), [](JsonObject* object) {
+        auto* memory = json_object_get_object_member(json_object_get_object_member(object, "data"), "memory");
+        json_object_set_int_member(memory, "storage_cache_budget_bytes", 0);
+    }));
+    wait_until([&] { return bridge.status().malformed_packets >= malformed + 11; }, "Invalid resource schema or source timestamp was accepted");
+    require(bridge.monitoring_snapshot().resources.sample->timestamp_us == 12000000 && bridge.status().frame == 501,
+        "Malformed, duplicate, reordered or wrong-session resource events replaced valid measurements");
+    runtime.send(timing(++sequence, 502, 1, 13000000, "null", 3, 0, 2));
+    wait_until([&] { return bridge.monitoring_snapshot().output_generation == 2; }, "Resource test output generation did not reset");
+    require(bridge.monitoring_snapshot().resources.sample->timestamp_us == 12000000,
+        "A VideoOut stream reset discarded process resource gauges");
+    const std::string unknown_memory = R"({"process_rss_bytes":null,"process_rss_timestamp_us":null,"sampled_cache_bytes":0,"sampled_cache_budget_bytes":null,"storage_cache_bytes":null,"storage_cache_budget_bytes":null,"gpu_heap_usage_bytes":null,"gpu_heap_budget_bytes":null,"gpu_heap_timestamp_us":null})";
+    runtime.send(resources(++sequence, 13000000, 3, 1, unknown_memory));
+    wait_until([&] { return bridge.monitoring_snapshot().resources.sample->timestamp_us == 13000000; }, "Decreasing resource gauges were not accepted");
+    snapshot = bridge.monitoring_snapshot();
+    require(snapshot.resources.sample->shaders.translations_active == 1 && !snapshot.resources.process_rss_age_ms &&
+        !snapshot.resources.gpu_heap_age_ms && snapshot.resources.sample->memory.sampled_cache_bytes == 0,
+        "Resource gauges became cumulative or unavailable sources became zero-valued samples");
+    const auto fresh_at = std::chrono::steady_clock::now();
+    auto next_heartbeat = fresh_at;
+    wait_until([&] {
+        if (std::chrono::steady_clock::now() >= next_heartbeat) {
+            runtime.send(packet(++sequence, "heartbeat", ",\"monitoring\":{\"enabled\":true,\"epoch\":3}"));
+            next_heartbeat = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+        }
+        return bridge.monitoring_snapshot().resources.stale;
+    }, "Ten seconds without resource data did not mark resources stale", std::chrono::seconds(12));
+    require(bridge.status().connected && bridge.monitoring_snapshot().resources.state == "stale" &&
+        *bridge.monitoring_snapshot().resources.age_ms >= 10000.0 &&
+        std::chrono::steady_clock::now() - fresh_at < std::chrono::seconds(12),
+        "Heartbeats refreshed resources or resource freshness disconnected the game");
+    runtime.send(resources(++sequence, 14000000, 3));
+    wait_until([&] { return bridge.monitoring_snapshot().resources.sample->timestamp_us == 14000000; }, "Stale resource snapshot could not refresh");
+    runtime.send(packet(++sequence, "heartbeat", ",\"monitoring\":{\"enabled\":false,\"epoch\":4}"));
+    wait_until([&] { return !bridge.monitoring_snapshot().enabled; }, "Resource monitoring did not stop");
+    snapshot = bridge.monitoring_snapshot();
+    require(snapshot.resources.stale && snapshot.resources.state == "disabled" && snapshot.resources.has_sample &&
+        snapshot.resources.sample->monitoring_epoch == 3 && snapshot.monitoring_epoch == 4,
+        "OFF erased the previous resource snapshot or labeled it current");
+    const auto received_before_late = bridge.status().received_events;
+    runtime.send(resources(++sequence, 15000000, 3));
+    runtime.send(packet(++sequence, "heartbeat", ",\"monitoring\":{\"enabled\":false,\"epoch\":4}"));
+    wait_until([&] { return bridge.status().received_events > received_before_late; }, "Resource epoch packet barrier was not received");
+    require(bridge.monitoring_snapshot().resources.sample->timestamp_us == 14000000,
+        "A late resource epoch changed the retained disabled snapshot");
+    runtime.send(packet(++sequence, "heartbeat", ",\"monitoring\":{\"enabled\":true,\"epoch\":5}"));
+    wait_until([&] { return bridge.monitoring_snapshot().monitoring_epoch == 5; }, "New resource epoch was not confirmed");
+    require(!bridge.monitoring_snapshot().resources.has_sample && !bridge.monitoring_snapshot().has_frames,
+        "A new ON epoch inherited old current resources or frame statistics");
+    runtime.send(resources(++sequence, 20000000, 5));
+    wait_until([&] { return bridge.monitoring_snapshot().resources.has_sample; }, "New epoch did not receive resources");
+    require(bridge.monitoring_snapshot().resources.sample->shaders.translations_completed == 9,
+        "Monitoring epoch changed process-lifetime shader counters");
+    const Json history(bridge.monitoring_snapshot_json(true));
+    require(json_object_get_boolean_member(json_object_get_object_member(history.object(), "resources"), "has_sample") &&
+        json_array_get_length(json_object_get_array_member(history.object(), "chart_samples")) == 0,
+        "Resource-only history snapshot omitted resource state or fabricated chart frames");
+    runtime.send(packet(++sequence, "goodbye"));
+    wait_until([&] { return !bridge.status().connected; }, "Resource runtime did not disconnect");
+    require(bridge.monitoring_snapshot().resources.has_sample && bridge.monitoring_snapshot().resources.stale &&
+        bridge.monitoring_snapshot().resources.state == "disconnected", "Disconnect discarded or refreshed resources");
+    bridge.end_session("bridge-check-session");
+    require(bridge.monitoring_snapshot().resources.has_sample, "Managed process exit erased resource diagnostics");
+    bridge.expect_session("resource-next-session", "PPSA01234");
+    require(!bridge.monitoring_snapshot().resources.has_sample && !bridge.monitoring_snapshot().resources.age_ms &&
+        !bridge.status().has_frame, "A new managed session inherited resource state or frame identity");
+}
+
 } // namespace
 
 int main() {
@@ -517,7 +699,8 @@ int main() {
         require(!bridge.status().error.empty(), "Runtime heartbeat expiry was not reported");
         bridge.end_session("ring-check-session");
         check_monitoring();
-        std::cout << "UDP session, live events, command receipt and HTTP MCP checks passed\n";
+        check_resources();
+        std::cout << "UDP session, frame and resource monitoring, command receipt and HTTP MCP checks passed\n";
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

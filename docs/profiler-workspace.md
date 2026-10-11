@@ -7,7 +7,7 @@ Additional attribution terms: see NOTICE in the repository root.
 
 # Profiler workspace and game input scripts
 
-This document combines the implemented frame-pacing dashboard with the remaining design and proposed integration contracts. FrameRift has Live/Logs views, game lifecycle tools and a UDP/MCP bridge; a bridge-enabled AnyPS5 build supports independent frame monitoring. Detailed CPU/GPU measurements, saved captures and input scripts remain planned. The reference images use example values, not measured gameplay.
+This document combines the implemented frame-pacing and shader/resource dashboard with the remaining design and proposed integration contracts. FrameRift has Live/Logs views, game lifecycle tools and a UDP/MCP bridge; a bridge-enabled AnyPS5 build supports independent frame and resource monitoring. Detailed CPU/GPU execution measurements, saved captures and input scripts remain planned. The reference images use example values, not measured gameplay.
 
 ## Workspace
 
@@ -35,14 +35,15 @@ If no valid frame arrived in the last window, show **No new frame data** and ret
 
 | Display | Meaning and scope | Existing source / bridge requirement |
 | --- | --- | --- |
-| FPS (estimated) and flip interval | Rate and intervals between runtime flip completions; not confirmed display FPS | Existing frame timing; structured per-frame export required |
+| FPS (estimated) and flip interval | Rate and intervals between runtime flip completions; not confirmed display FPS | Implemented independent per-frame bridge export |
 | Frame/submission relationship | Frame ID, stream, submission range, flip packet, first execution and completion | Existing frame timing; preserve original identifiers |
 | Driver worker elapsed time | Instrumented driver work and waits, with attributed/unattributed time | Existing timing scopes; not a complete game CPU sampling profiler |
 | Top driver phases | Phase count, inclusive elapsed total, maximum and bytes where provided | Existing phase metrics; distinguish frame-local scopes from work completed between flips |
 | Waits and preparation | Acquire, synchronization, upload, shader/pipeline work where separately instrumented | Existing scopes/counters; display actual scope names and coverage |
 | GPU batches | Completed batch span, covered ranges, gaps and unread/dropped results | Existing delayed GPU accounting; not overall GPU utilization |
 | Top GPU programs/classes | Program identity, command class, GPU duration, calls and unattributed duration | Existing roughly ten-second aggregates; a one-second/per-frame breakdown needs new attribution/export |
-| Memory and caches | Device-local heap budget/usage, sampled/storage image cache bytes and budget | Existing memory-budget/counter paths; new structured samples required |
+| Shader activity and caches | Translation activity/completions, queued/running preparation jobs, retained variants, CPU payload and disk-cache counters | Implemented coalesced resource status; separate pipeline build/optimization counters available through MCP |
+| Memory and caches | Process RSS, device-local heap budget/usage, sampled/storage image cache bytes and budget | Implemented independently of frame events; source timestamps preserve cached GPU sample age |
 | Activity counters | Draw/dispatch counts, cache hits/misses, compile count/time and upload bytes when provided | Existing diagnostics/scopes; export only counters actually available |
 | Diagnostics and capture status | Latest errors, exit status, event loss, requested/captured frame and artifact status | Process/log controls already work; capture producer remains required |
 

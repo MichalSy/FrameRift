@@ -41,6 +41,13 @@ std::string number(double value, unsigned precision = 1) {
     return output.str();
 }
 
+std::string bytes(long double value) {
+    const char* units[] = {"B", "KiB", "MiB", "GiB", "TiB", "PiB", "EiB"};
+    unsigned unit = 0;
+    while (value >= 1024 && unit < 6) { value /= 1024; ++unit; }
+    return number(static_cast<double>(value), unit ? 1 : 0) + " " + units[unit];
+}
+
 GtkWidget* panel() {
     auto* widget = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
     gtk_widget_add_css_class(widget, "monitor-panel");
@@ -268,7 +275,86 @@ ProfilerView::ProfilerView(std::function<void(bool)> request_monitoring)
     gtk_widget_add_controller(chart_, GTK_EVENT_CONTROLLER(chart_click_));
     gtk_box_append(GTK_BOX(chart_panel), chart_);
     gtk_box_append(GTK_BOX(chart_panel), label("Runtime flip completion · game monotonic clock · gaps are not interpolated", "monitor-chart-hint"));
-    gtk_box_append(GTK_BOX(live), chart_panel);
+    auto* resource_row = gtk_flow_box_new();
+    gtk_flow_box_set_selection_mode(GTK_FLOW_BOX(resource_row), GTK_SELECTION_NONE);
+    gtk_flow_box_set_homogeneous(GTK_FLOW_BOX(resource_row), false);
+    gtk_flow_box_set_min_children_per_line(GTK_FLOW_BOX(resource_row), 1);
+    gtk_flow_box_set_max_children_per_line(GTK_FLOW_BOX(resource_row), 2);
+    gtk_flow_box_set_column_spacing(GTK_FLOW_BOX(resource_row), 12);
+    gtk_flow_box_set_row_spacing(GTK_FLOW_BOX(resource_row), 12);
+    gtk_widget_add_css_class(resource_row, "resource-row");
+    gtk_widget_set_size_request(chart_panel, 600, -1);
+    gtk_widget_set_hexpand(chart_panel, true);
+    gtk_flow_box_insert(GTK_FLOW_BOX(resource_row), chart_panel, -1);
+
+    resource_panel_ = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
+    gtk_widget_add_css_class(resource_panel_, "monitor-panel");
+    gtk_widget_add_css_class(resource_panel_, "resource-panel");
+    gtk_widget_set_size_request(resource_panel_, 360, -1);
+    gtk_widget_set_hexpand(resource_panel_, true);
+    auto* resource_header = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
+    auto* resource_title = label("Shader & memory", "monitor-heading");
+    gtk_widget_set_hexpand(resource_title, true);
+    gtk_box_append(GTK_BOX(resource_header), resource_title);
+    resource_state_ = label("Unavailable", "resource-state");
+    gtk_box_append(GTK_BOX(resource_header), resource_state_);
+    gtk_box_append(GTK_BOX(resource_panel_), resource_header);
+
+    auto* resource_grid = gtk_grid_new();
+    gtk_grid_set_column_spacing(GTK_GRID(resource_grid), 12);
+    gtk_grid_set_row_spacing(GTK_GRID(resource_grid), 3);
+    const char* shader_labels[] = {"Preparing jobs", "Translation ops", "Cached variants", "Disk cache"};
+    const char* shader_tips[] = {
+        "Shader registration preparation jobs queued and currently active.",
+        "Active and completed translation operations: guest code to IR and variant SPIR-V emission. These are not distinct shader counts. Completed counts cover the process lifetime.",
+        "Compiled variants retained by the source cache. CPU payload counts copied guest-code and SPIR-V words; excludes IR, metadata, temporary allocations and native driver memory.",
+        "Disk shader-cache hits and misses over the process lifetime. Writes and failures are available in the tooltip."
+    };
+    for (unsigned i = 0; i < shader_values_.size(); ++i) {
+        auto* heading = label(shader_labels[i], "resource-label");
+        gtk_widget_set_tooltip_text(heading, shader_tips[i]);
+        gtk_grid_attach(GTK_GRID(resource_grid), heading, 0, i, 1, 1);
+        shader_values_[i] = label("Unavailable", "resource-value");
+        gtk_label_set_xalign(GTK_LABEL(shader_values_[i]), 1);
+        gtk_label_set_ellipsize(GTK_LABEL(shader_values_[i]), PANGO_ELLIPSIZE_END);
+        gtk_widget_set_hexpand(shader_values_[i], true);
+        gtk_grid_attach(GTK_GRID(resource_grid), shader_values_[i], 1, i, 1, 1);
+    }
+    const char* memory_labels[] = {"Process RSS", "Sampled cache", "Storage cache", "GPU heap"};
+    const char* memory_tips[] = {
+        "Resident memory of the game process; separate from shader payload and GPU memory.",
+        "Sampled-image cache accounting and its configured budget; not total physical GPU memory.",
+        "Storage-image cache accounting and its configured budget; not total physical GPU memory.",
+        "Driver estimate for the largest device-local heap and its budget. The source poll age is shown separately from resource receipt age."
+    };
+    for (unsigned i = 0; i < memory_values_.size(); ++i) {
+        auto* heading = label(memory_labels[i], "resource-label");
+        gtk_widget_set_tooltip_text(heading, memory_tips[i]);
+        gtk_grid_attach(GTK_GRID(resource_grid), heading, 0, i + 4, 1, 1);
+        if (i == 3) heap_label_ = heading;
+        auto* value_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
+        memory_values_[i] = label("Unavailable", "resource-value");
+        gtk_label_set_xalign(GTK_LABEL(memory_values_[i]), 1);
+        gtk_label_set_ellipsize(GTK_LABEL(memory_values_[i]), PANGO_ELLIPSIZE_END);
+        gtk_widget_set_hexpand(memory_values_[i], true);
+        gtk_box_append(GTK_BOX(value_box), memory_values_[i]);
+        if (i) {
+            memory_gauges_[i - 1] = gtk_progress_bar_new();
+            gtk_widget_add_css_class(memory_gauges_[i - 1], "resource-gauge");
+            gtk_widget_set_visible(memory_gauges_[i - 1], false);
+            gtk_box_append(GTK_BOX(value_box), memory_gauges_[i - 1]);
+        }
+        gtk_grid_attach(GTK_GRID(resource_grid), value_box, 1, i + 4, 1, 1);
+    }
+    gtk_box_append(GTK_BOX(resource_panel_), resource_grid);
+    resource_scope_ = label("Latest resource sample · unavailable", "resource-scope");
+    gtk_label_set_wrap(GTK_LABEL(resource_scope_), true);
+    gtk_widget_set_vexpand(resource_scope_, true);
+    gtk_widget_set_valign(resource_scope_, GTK_ALIGN_END);
+    gtk_widget_set_tooltip_text(resource_scope_, "Latest shader and memory sample, independent of the selected frame. Resource receipt age and source poll ages are separate.");
+    gtk_box_append(GTK_BOX(resource_panel_), resource_scope_);
+    gtk_flow_box_insert(GTK_FLOW_BOX(resource_row), resource_panel_, -1);
+    gtk_box_append(GTK_BOX(live), resource_row);
 
     auto* console = gtk_box_new(GTK_ORIENTATION_VERTICAL, 14);
     gtk_widget_set_vexpand(console, true);
@@ -478,7 +564,104 @@ void ProfilerView::monitoring(const MonitoringSnapshot& snapshot) {
     if (retained) gtk_widget_add_css_class(freshness_, "stale");
     else gtk_widget_remove_css_class(freshness_, "stale");
     update_frame_detail();
+    update_resources();
     gtk_widget_queue_draw(chart_);
+}
+
+void ProfilerView::update_resources() {
+    const auto& resources = monitoring_.resources;
+    const bool available = resources.has_sample && resources.sample.has_value();
+    const bool retained = available && (!monitoring_.connected || !monitoring_.enabled ||
+        !resources.supported || resources.stale);
+    std::string state;
+    if (!monitoring_.connected) state = "Disconnected";
+    else if (!resources.supported) state = "Unavailable";
+    else if (!monitoring_.enabled) state = "Off";
+    else if (!available) state = "Waiting";
+    else state = resources.stale ? "Stale" : "Live";
+    gtk_label_set_text(GTK_LABEL(resource_state_), state.c_str());
+    if (retained) gtk_widget_add_css_class(resource_panel_, "stale");
+    else gtk_widget_remove_css_class(resource_panel_, "stale");
+    std::string scope = "Latest resource sample";
+    if (available && resources.age_ms) scope += " · " + number(*resources.age_ms / 1000.0) + " s ago";
+    else scope += " · unavailable";
+    if (retained) scope += " · retained";
+    gtk_label_set_text(GTK_LABEL(resource_scope_), scope.c_str());
+    for (auto* value : memory_values_) gtk_widget_remove_css_class(value, "stale");
+    for (auto* gauge : memory_gauges_) gtk_widget_remove_css_class(gauge, "stale");
+    if (!available) {
+        for (auto* value : shader_values_) {
+            gtk_label_set_text(GTK_LABEL(value), "Unavailable");
+            gtk_widget_set_tooltip_text(value, nullptr);
+        }
+        for (auto* value : memory_values_) {
+            gtk_label_set_text(GTK_LABEL(value), "Unavailable");
+            gtk_widget_set_tooltip_text(value, nullptr);
+        }
+        for (auto* gauge : memory_gauges_) gtk_widget_set_visible(gauge, false);
+        gtk_label_set_text(GTK_LABEL(heap_label_), "GPU heap");
+        return;
+    }
+    const auto& sample = *resources.sample;
+    const auto& shaders = sample.shaders;
+    const std::string shader_texts[] = {
+        std::to_string(shaders.preparation_queue_pending) + " queued · " + std::to_string(shaders.preparation_active) + " active",
+        std::to_string(shaders.translations_active) + " active · " + std::to_string(shaders.translations_completed) + " completed",
+        std::to_string(shaders.cached_variants_count) + " · " + bytes(static_cast<long double>(shaders.source_code_bytes) + shaders.variant_spirv_bytes) + " CPU",
+        std::to_string(shaders.disk_cache_hits) + " hits / " + std::to_string(shaders.disk_cache_misses) + " misses"
+    };
+    for (unsigned i = 0; i < shader_values_.size(); ++i) {
+        gtk_label_set_text(GTK_LABEL(shader_values_[i]), shader_texts[i].c_str());
+        gtk_widget_set_tooltip_text(shader_values_[i], shader_texts[i].c_str());
+    }
+    const auto pipelines = shader_texts[1] + "\nTranslation operations, not distinct shaders. Completed counts cover the process lifetime.\nPipeline creation/link calls: " +
+        std::to_string(shaders.pipeline_builds_active) + " active, " + std::to_string(shaders.pipeline_builds_completed) +
+        " successfully completed.\nPipeline optimization: " + std::to_string(shaders.pipeline_optimization_queue_pending) +
+        " queued, " + std::to_string(shaders.pipeline_optimizations_active) + " active.";
+    gtk_widget_set_tooltip_text(shader_values_[1], pipelines.c_str());
+    const auto payload = shader_texts[2] + "\nCopied guest code: " + bytes(shaders.source_code_bytes) +
+        "; variant SPIR-V: " + bytes(shaders.variant_spirv_bytes) + ".\nCompiled variants retained by the source cache. CPU payload counts copied guest-code and SPIR-V words; excludes IR, metadata, temporary allocations and native driver memory.";
+    gtk_widget_set_tooltip_text(shader_values_[2], payload.c_str());
+    const auto cache = shader_texts[3] + "\nProcess totals: " + std::to_string(shaders.disk_cache_writes) +
+        " writes, " + std::to_string(shaders.disk_cache_load_failures) + " load failures, " +
+        std::to_string(shaders.disk_cache_write_failures) + " write failures.";
+    gtk_widget_set_tooltip_text(shader_values_[3], cache.c_str());
+    const auto source_age = [](const std::optional<double>& age) {
+        return age ? number(*age / 1000.0) + " s old" : std::string("age unavailable");
+    };
+    const auto& memory = sample.memory;
+    const auto rss = memory.process_rss_bytes ? bytes(*memory.process_rss_bytes) : "Unavailable";
+    gtk_label_set_text(GTK_LABEL(memory_values_[0]), rss.c_str());
+    const auto rss_tip = "Game process resident memory: " + rss + "\nSource poll " + source_age(resources.process_rss_age_ms);
+    gtk_widget_set_tooltip_text(memory_values_[0], rss_tip.c_str());
+    if (resources.process_rss_age_ms && *resources.process_rss_age_ms >= 10000)
+        gtk_widget_add_css_class(memory_values_[0], "stale");
+    const std::optional<std::uint64_t> usages[] = {memory.sampled_cache_bytes, memory.storage_cache_bytes, memory.gpu_heap_usage_bytes};
+    const std::optional<std::uint64_t> budgets[] = {memory.sampled_cache_budget_bytes, memory.storage_cache_budget_bytes, memory.gpu_heap_budget_bytes};
+    for (unsigned i = 0; i < memory_gauges_.size(); ++i) {
+        const bool has_budget = budgets[i] && *budgets[i] > 0;
+        auto text = usages[i] ? bytes(*usages[i]) : "Unavailable";
+        if (has_budget) text += " / " + bytes(*budgets[i]);
+        else if (usages[i]) text += " / unavailable";
+        gtk_label_set_text(GTK_LABEL(memory_values_[i + 1]), text.c_str());
+        const auto tip = text + (i == 2 ? "\nDriver estimate for the largest device-local heap; source poll " + source_age(resources.gpu_heap_age_ms) :
+            "\nImage cache accounting / configured cache budget; not total physical GPU memory.");
+        gtk_widget_set_tooltip_text(memory_values_[i + 1], tip.c_str());
+        const bool has_ratio = usages[i] && has_budget;
+        gtk_widget_set_visible(memory_gauges_[i], has_ratio);
+        gtk_widget_remove_css_class(memory_gauges_[i], "over-budget");
+        if (has_ratio) {
+            const auto ratio = static_cast<double>(*usages[i]) / *budgets[i];
+            gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(memory_gauges_[i]), std::clamp(ratio, 0.0, 1.0));
+            if (ratio > 1) gtk_widget_add_css_class(memory_gauges_[i], "over-budget");
+        }
+    }
+    const auto heap_title = "GPU heap\n" + source_age(resources.gpu_heap_age_ms);
+    gtk_label_set_text(GTK_LABEL(heap_label_), heap_title.c_str());
+    if (resources.gpu_heap_age_ms && *resources.gpu_heap_age_ms >= 10000) {
+        gtk_widget_add_css_class(memory_values_[3], "stale");
+        gtk_widget_add_css_class(memory_gauges_[2], "stale");
+    }
 }
 
 void ProfilerView::update_frame_detail() {

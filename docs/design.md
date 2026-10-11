@@ -17,6 +17,10 @@ The UI is native. Animations should provide short, smooth transitions and immedi
 
 The implementation covers the library/cache, automatic folder scanning, Linux launch/rebuild, Profiler console output, local UDP/MCP receiving and game control, Settings with keyring credentials and animated heroes. AnyPS5's optional adapter supplies live flip pacing, shader activity and memory. The native Live dashboard follows profiler-live-v6; detailed frame attribution, captures and saved input scripts remain design targets.
 
+## Shared application shell
+
+The application creates one header outside the page stack. Branding, navigation, connection status, game search, refresh, Settings and window controls retain the Library header layout and styling on every page. Switching tabs changes only the page content and active navigation marker. Pages do not rebuild, restyle, hide or reorder shell controls. Search and refresh open the Library; profiler session controls stay within the Profiler page.
+
 ## View 1: Library
 
 ![Library design concept](../assets/design/library.png)

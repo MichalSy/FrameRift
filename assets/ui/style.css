@@ -51,12 +51,6 @@ button { box-shadow: none; text-shadow: none; }
 .window-buttons button.close:hover { background: #c73d50; }
 .bridge-indicator { color: #91a7b7; font-size: 12px; padding: 6px 12px; border-radius: 14px; background: #122c3a; }
 .bridge-indicator.connected { color: #8adbb3; }
-.profiler-window .topbar { min-height: 42px; padding-left: 16px; background: #0d1822; border-bottom: 1px solid #293e4c; }
-.profiler-window .window-buttons button { min-height: 42px; }
-.profiler-window .brand { font-size: 17px; margin-left: 2px; }
-.profiler-window .topbar separator { margin: 10px 16px; }
-.profiler-window .nav-tab { font-size: 14px; padding: 11px 12px 9px; border-bottom-width: 2px; }
-.profiler-window .toolbar-action { background: transparent; border: none; border-radius: 0; min-height: 30px; }
 .profiler-page { padding: 8px 16px 12px; background: #0b151e; }
 .profiler-page button, .profiler-page dropdown > button { border-radius: 0; border: 1px solid #2a4658; background: #0e202d; padding: 3px 14px; min-height: 23px; box-shadow: none; font-size: 12px; }
 .profiler-page button:checked { background: #133d55; border-color: #00b9d3; color: #effbff; }

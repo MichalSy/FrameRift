@@ -15,6 +15,7 @@ Additional attribution terms: see NOTICE in the repository root.
 - Write code, identifiers, comments and UI text in English.
 - Keep data and behavior in their domain; reuse existing code before adding a file or abstraction.
 - Keep SQLite game/cache queries in `src/library`; keep GTK presentation in `src/ui`.
+- Build the app header once outside the page stack; keep its layout, styles and controls identical on every page. Pages own only their content.
 - Keep conversion and process launching in `src/runtime`; reuse the AnyPS5 launcher with explicit original-game, generated-code and shared-runtime paths.
 - Rebuild only generated game code; preserve original files, runtime data, saves, shader caches and shared runtime libraries.
 - Use VTE only for profiler output; keep direct process capture and full session logs in `src/runtime`, bound scrollback and keep the game independent of tab navigation.

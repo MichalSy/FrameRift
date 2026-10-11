@@ -7,7 +7,7 @@ Additional attribution terms: see NOTICE in the repository root.
 
 # Native profiler visual review
 
-Reference: [profiler-live-v6](../assets/design/profiler-live-v6.png), 1578 × 997. The native screenshots use the same window dimensions and real bridge observations. Consumer timing has no source yet and intentionally shows `–` and empty bars. The latest requested simplification removes permanent scope explanations and the normal-state missing-frame warning; details remain in tooltips.
+Reference: [profiler-live-v6](../assets/design/profiler-live-v6.png), 1578 × 997. The native screenshots use the same window dimensions and real bridge observations. Consumer timing has no source yet and intentionally shows `–` and empty bars. The application header follows the shared Library shell on every page; the v6 page layout starts below it. The latest requested simplification removes permanent scope explanations and the normal-state missing-frame warning; details remain in tooltips.
 
 ![Native FPS dashboard](../assets/screenshots/profiler-live.png)
 
@@ -20,13 +20,14 @@ Manual weighted assessment: **84/100**, exceeding the requested 75% threshold. T
 | Area | Score | Evidence / differences |
 | --- | --- | --- |
 | Composition | 30/35 | Session strip, four metrics, full-width chart, ten-row consumer table, shader/memory right column and status rail match. No automation. |
-| Geometry and spacing | 20/25 | Flat rectangular panels and approximately 64/36 lower split. Native decorations add an inset; chart baseline and row heights differ slightly. |
+| Geometry and spacing | 20/25 | Flat rectangular panels and approximately 64/36 lower split. The shared Library header has its original height and controls instead of the compact concept header. Native decorations add an inset; chart baseline and row heights differ slightly. |
 | Palette and surfaces | 17/20 | Dark matte navy, cyan active controls, thin slate borders, restrained amber activity/stale states. Native surface is less textured. |
 | Typography and numeric alignment | 13/15 | Right-aligned tabular numbers and consistent decimal precision. Metric columns and summary width remain stable as values change. Native text is slightly smaller. Screenshots before/after the 3000 ms → 16 ms change retain the same metric dividers. |
 | Controls | 4/5 | FPS default, flip toggle, Live/Logs, monitoring and Follow live. Unsupported CPU/GPU measurement controls are disabled; update rate is fixed at one second. |
 
 ## Verification
 
+- Shared-shell check: Library and Profiler screenshots at 1578 × 997 have identical branding and global-control header pixels; only the active tab marker changes.
 - Full clean native build (`cmake --build build --clean-first -j2`).
 - Bridge and game MCP checks pass. Added frame-rate checks cover 60 FPS, a 2.5 ms catch-up interval, a five-second stall, loss and epoch changes.
 - Native monitoring, FPS/interval toggle, selection/Follow live, Logs and Library navigation checked while the game continued running; session control used Codex FrameRift MCP.

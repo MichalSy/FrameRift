@@ -171,7 +171,7 @@ private:
         gtk_stack_set_transition_duration(GTK_STACK(pages_), 140);
         gtk_widget_set_vexpand(pages_, true);
         gtk_window_set_child(GTK_WINDOW(window_), pages_);
-        gtk_window_set_titlebar(GTK_WINDOW(window_), header());
+        gtk_window_set_titlebar(GTK_WINDOW(window_), app_header());
         gtk_stack_add_named(GTK_STACK(pages_), library_view(), "library");
         if (!profiler_) profiler_ = std::make_unique<ProfilerView>([this](bool enabled) {
             if (!bridge_) throw std::runtime_error("The game bridge is unavailable");
@@ -196,7 +196,7 @@ private:
         if (!library_.game_folders().empty()) refresh_library(app);
     }
 
-    GtkWidget* header() {
+    GtkWidget* app_header() {
         auto* handle = gtk_window_handle_new();
         auto* row = box(GTK_ORIENTATION_HORIZONTAL, 12);
         gtk_widget_add_css_class(row, "topbar");
@@ -226,6 +226,7 @@ private:
         g_signal_connect(search_, "search-changed", G_CALLBACK(+[](GtkSearchEntry*, gpointer data) {
             auto& self = *static_cast<Application*>(data);
             self.guard([&] {
+                self.show_page("library");
                 self.refresh_filter();
             });
         }), this);
@@ -237,7 +238,10 @@ private:
         gtk_widget_set_tooltip_text(refresh_, "Refresh library");
         g_signal_connect(refresh_, "clicked", G_CALLBACK(+[](GtkButton*, gpointer data) {
             auto& self = *static_cast<Application*>(data);
-            self.guard([&] { self.refresh_library(gtk_window_get_application(GTK_WINDOW(self.window_)), true); });
+            self.guard([&] {
+                self.show_page("library");
+                self.refresh_library(gtk_window_get_application(GTK_WINDOW(self.window_)), true);
+            });
         }), this);
         gtk_box_append(GTK_BOX(row), refresh_);
         folders_action_ = button("Settings", "toolbar-action");
@@ -319,13 +323,6 @@ private:
     void show_page(const char* page) {
         gtk_stack_set_visible_child_name(GTK_STACK(pages_), page);
         const bool library = g_str_equal(page, "library");
-        if (library) gtk_widget_remove_css_class(window_, "profiler-window");
-        else gtk_widget_add_css_class(window_, "profiler-window");
-        gtk_widget_set_visible(bridge_indicator_, library);
-        gtk_box_reorder_child_after(GTK_BOX(gtk_widget_get_parent(folders_action_)), folders_action_,
-            library ? refresh_ : profiler_tab_);
-        gtk_widget_set_visible(search_, library);
-        gtk_widget_set_visible(refresh_, library);
         for (auto* tab : {library_tab_, profiler_tab_}) {
             if ((tab == library_tab_) == library) gtk_widget_add_css_class(tab, "active");
             else gtk_widget_remove_css_class(tab, "active");

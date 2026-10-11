@@ -6,6 +6,7 @@
 #pragma once
 
 #include "runtime/launch.hpp"
+#include "runtime/bridge.hpp"
 
 #include <gtk/gtk.h>
 
@@ -30,6 +31,7 @@ public:
     void output(std::string_view text);
     void finished(const std::string& status);
     void failed(const std::string& message, const std::filesystem::path& conversion_log = {});
+    void bridge_status(const BridgeStatus& status, const std::string& mcp_endpoint, const std::string& error);
 
 private:
     void show_conversion_log(const std::filesystem::path& path);
@@ -41,6 +43,10 @@ private:
     GtkWidget* root_ = nullptr;
     GtkWidget* title_ = nullptr;
     GtkWidget* status_ = nullptr;
+    GtkWidget* bridge_connection_ = nullptr;
+    GtkWidget* bridge_endpoint_ = nullptr;
+    GtkWidget* mcp_endpoint_ = nullptr;
+    GtkWidget* bridge_activity_ = nullptr;
     GtkWidget* empty_ = nullptr;
     GtkWidget* view_ = nullptr;
     GtkWidget* follow_ = nullptr;

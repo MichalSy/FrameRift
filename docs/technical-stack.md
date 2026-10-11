@@ -24,11 +24,13 @@ The table lists the implemented stack.
 | GTK stack | GLib/GObject/GIO | Application, signals, resources, cache locations and subprocesses |
 | Local cache | SQLite3 | Game metadata, SteamGridDB mappings and local artwork paths |
 | HTTP | libcurl 7.85+ | SteamGridDB API and image downloads outside UI callbacks |
-| JSON | JSON-GLib | Read SteamGridDB responses using the existing GLib stack |
+| MCP HTTP server | libsoup 3.2+ | Serve the local Streamable HTTP endpoint on the GLib main context |
+| Debug transport | GIO UDP socket and a C++ worker | Receive events and send commands independently of GTK rendering |
+| JSON | JSON-GLib | Read artwork responses and the versioned bridge/MCP messages |
 | Credentials | libsecret | Store the artwork API key in the desktop keyring |
 | Hero animation | libwebp and libwebpdemux | Decode and composite timed WebP frames for the selected GTK hero |
 | Resources | `glib-compile-resources` | Embed CSS and app marks as GResources |
-| Checks | CTest and small C++ programs | Check cache behavior and the launch flow without a test framework |
+| Checks | CTest and small C++ programs | Check cache, launch and actual UDP/HTTP exchanges without a test framework |
 
 FrameRift has a native UI process and no browser runtime. Dependencies are added only for a concrete need. [Toolkit and platforms](toolkit-and-platforms.md) covers the toolkit decision for later platform integration.
 
@@ -54,11 +56,13 @@ Windows support concerns both the backend and distribution. DLLs, image loaders,
 
 ## Data processing
 
-JSON-GLib currently reads SteamGridDB responses. This reuses the existing GLib stack without requiring another JSON library. Any later high-frequency channel must assess its actual message rate and cost separately. A compact, versioned format may suit larger event volumes. A format change must preserve measurement semantics.
+JSON-GLib reads SteamGridDB, UDP bridge and MCP messages. The bridge uses bounded JSON datagrams; performance under real runtime event rates remains to be measured. A compact format may suit larger event volumes, while preserving measurement semantics.
 
 SQLite stores the catalog and indexes. The primary measurement store will be designed separately. zstd is a possible capture-compression component; compression and file writes must stay outside the game thread and UI drawing routine.
 
 libcurl handles HTTPS requests and image downloads. Metadata and images are then stored in the local cache. Settings saves the API key through libsecret in the desktop keyring; `STEAMGRIDDB_API_KEY` takes precedence. Caches and diagnostics exclude the key. Keyring access has a timeout and runs outside the GTK thread, as do network requests. Manual matching, refresh behavior and rate limits belong in small, focused extensions.
+
+libsoup provides the embedded localhost HTTP server for MCP; it does not replace the artwork HTTP client. [Debug bridge and MCP](debug-bridge.md) defines the implemented transport and limits.
 
 ## SDL2, Vulkan and image formats
 

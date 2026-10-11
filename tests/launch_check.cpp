@@ -88,6 +88,15 @@ assert sys.argv[1] == '--' and sys.argv[3] == '-B'
 assert pathlib.Path(sys.argv[4]) == pathlib.Path(__file__).with_name('run_game.py')
 log = pathlib.Path(os.environ['ANYPS5_MEMORY_LOG'])
 assert log.is_absolute() and log.name == 'memory.jsonl'
+bridge_names = ('FRAMERIFT_BRIDGE_HOST', 'FRAMERIFT_BRIDGE_PORT', 'FRAMERIFT_BRIDGE_SESSION', 'FRAMERIFT_GAME_ID')
+if 'FRAMERIFT_BRIDGE_PORT' in os.environ:
+    assert os.environ['FRAMERIFT_BRIDGE_HOST'] == '127.0.0.1'
+    assert os.environ['FRAMERIFT_BRIDGE_PORT'] == '47777'
+    assert os.environ['FRAMERIFT_BRIDGE_SESSION'] == log.parent.name
+    assert os.environ['FRAMERIFT_GAME_ID'] == 'PPSA01234'
+    (log.parent / 'bridge-environment').write_text('configured')
+else:
+    assert not any(name in os.environ for name in bridge_names)
 with log.open('x') as output:
     output.write('{"fixture":true}\n')
 os.environ['FRAMERIFT_MEMORY_GUARD_CHECK'] = 'active'
@@ -219,7 +228,7 @@ if (root / 'fail-conversion').exists():
             completed_log = read(prepared.log_path);
             ++completions;
             finished = true;
-        });
+        }, {47777, prepared.log_path.parent_path().filename().string()});
         iterate_until(finished);
         require(completion_error.empty() && exit_status == 7 && completions == 1, "Child exit status or capture completion is wrong");
         const auto log = read(prepared.log_path);
@@ -228,6 +237,8 @@ if (root / 'fail-conversion').exists():
         require(read(prepared.log_path.parent_path() / "memory.jsonl") == "{\"fixture\":true}\n" &&
             !std::filesystem::exists(work / "memory.jsonl"),
             "Memory guard measurements must stay in the game session log directory");
+        require(read(prepared.log_path.parent_path() / "bridge-environment") == "configured",
+            "Bridge address and session identity must reach the game's launcher");
         require(read(work / "_sd/live-save.bin") == "Live save" && read(work / "_sd_mem/u1/slot0.bin") == "Memory save" &&
             !std::filesystem::exists(code / "_sd") && !std::filesystem::exists(code / "_sd_mem"),
             "The game's relative save files must be written beneath the shared persistent data directory");
@@ -368,6 +379,7 @@ if (root / 'fail-conversion').exists():
         bool failure_finished = false;
         int output_calls = 0;
         std::string failure_error;
+        g_setenv("FRAMERIFT_BRIDGE_PORT", "inherited stale port", true);
         framerift::launch_game(callback_failure, [&](std::string_view) {
             ++output_calls;
             throw std::runtime_error("Output fixture failed");
@@ -377,6 +389,7 @@ if (root / 'fail-conversion').exists():
             failure_finished = true;
         });
         iterate_until(failure_finished);
+        g_unsetenv("FRAMERIFT_BRIDGE_PORT");
         require(output_calls == 1 && failure_error == "Output fixture failed" && exit_status == 7 &&
             read(callback_failure.log_path) == expected, "A display failure must still drain the child and preserve the full raw log");
         auto log_failure = framerift::prepare_game(game, settings, cache, data);

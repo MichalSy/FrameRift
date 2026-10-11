@@ -10,6 +10,7 @@
 #include <gio/gio.h>
 
 #include <filesystem>
+#include <cstdint>
 #include <functional>
 #include <stdexcept>
 #include <string>
@@ -39,6 +40,10 @@ PreparedGame prepare_game(const Game& game, const LaunchSettings& settings,
     const std::filesystem::path& cache_root, const std::filesystem::path& data_root, bool rebuild = false);
 using GameOutput = std::function<void(std::string_view)>;
 using GameFinished = std::function<void(GSubprocess*, const std::string&)>;
-void launch_game(const PreparedGame& game, GameOutput output, GameFinished finished);
+struct BridgeLaunch {
+    std::uint16_t port = 0;
+    std::string session_id;
+};
+void launch_game(const PreparedGame& game, GameOutput output, GameFinished finished, const BridgeLaunch& bridge = {});
 
 } // namespace framerift

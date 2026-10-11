@@ -17,8 +17,8 @@ This plan describes the intended product and open technical questions. Phases ar
 - Configured game folders are scanned automatically. Entries use titles and stable IDs from local metadata; SteamGridDB supplies covers, heroes and logos.
 - Metadata and images are cached locally for offline use. Settings stores the API key in the desktop keyring; the environment can override it.
 - Linux launch/rebuild uses the modified AnyPS5 fork. The Profiler console displays captured output and retains complete session logs. Animated WebP heroes and Linux desktop installation are implemented.
-- Embedded game rendering, structured telemetry and frame-analysis charts remain planned.
-- Small cache and launch checks verify data behavior; native UI smoke checks cover library navigation and reaching an external game window.
+- FrameRift's UDP receiver and HTTP MCP tools are implemented, including actual connection state and bounded event/command buffers. The AnyPS5 sender, embedded game rendering and frame-analysis charts remain planned.
+- Small cache, launch and real UDP/HTTP checks verify data behavior; native UI smoke checks cover library navigation, bridge connection transitions and reaching an external game window.
 
 The current scope is checked for library behavior, cache preservation and launch preparation. Actual gameplay compatibility remains unverified. The integration experiments below describe remaining validation and extensions. Additional modules and screens need a concrete use case.
 
@@ -43,6 +43,8 @@ The matrix includes Windows and Linux/X11. Treat Wayland separately, especially 
 ### C. Small telemetry interface
 
 An optional sender provides a handshake and a limited set of structured events. The receiver associates frames and handles delayed GPU data. Existing timing files provide a reference without becoming an indefinitely stable API.
+
+The FrameRift receiver and MCP command/event access are implemented in [Debug bridge and MCP](debug-bridge.md). Runtime instrumentation and richer frame correlation still require the AnyPS5 adapter.
 
 **Success criteria:** Explain measurement points and clock basis; make frame IDs traceable; ensure disconnection and a slow receiver do not block the game; count dropped events; compare baseline and instrumented runs for overhead. Never present synthetic unavailable values as measurements.
 

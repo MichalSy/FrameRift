@@ -47,6 +47,23 @@ ProfilerView::ProfilerView() {
     gtk_box_append(GTK_BOX(header), status_);
     gtk_box_append(GTK_BOX(root_), header);
 
+    auto* bridge = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
+    gtk_widget_add_css_class(bridge, "bridge-details");
+    auto* connection = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 20);
+    bridge_connection_ = label("Waiting for game connection", "bridge-connection");
+    gtk_widget_set_hexpand(bridge_connection_, true);
+    gtk_box_append(GTK_BOX(connection), bridge_connection_);
+    bridge_activity_ = label("", "bridge-endpoint");
+    gtk_box_append(GTK_BOX(connection), bridge_activity_);
+    gtk_box_append(GTK_BOX(bridge), connection);
+    bridge_endpoint_ = label("", "bridge-endpoint");
+    mcp_endpoint_ = label("", "bridge-endpoint");
+    for (auto* endpoint : {bridge_endpoint_, mcp_endpoint_}) {
+        gtk_label_set_selectable(GTK_LABEL(endpoint), true);
+        gtk_box_append(GTK_BOX(bridge), endpoint);
+    }
+    gtk_box_append(GTK_BOX(root_), bridge);
+
     auto* console = gtk_box_new(GTK_ORIENTATION_VERTICAL, 14);
     gtk_widget_set_vexpand(console, true);
     auto* actions = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 20);
@@ -161,6 +178,24 @@ ProfilerView::~ProfilerView() {
     g_signal_handlers_disconnect_by_data(view_, this);
     g_signal_handlers_disconnect_by_data(adjustment_, this);
     g_object_unref(root_);
+}
+
+void ProfilerView::bridge_status(const BridgeStatus& status, const std::string& mcp_endpoint, const std::string& error) {
+    const auto connection = status.connected ? "Game connected · " + status.game_id :
+        status.port ? (status.error.empty() ? "Waiting for game connection" : "Game connection lost") : "Game bridge unavailable";
+    gtk_label_set_text(GTK_LABEL(bridge_connection_), connection.c_str());
+    if (status.connected) gtk_widget_add_css_class(bridge_connection_, "connected");
+    else gtk_widget_remove_css_class(bridge_connection_, "connected");
+    const auto udp = status.port ? "UDP  127.0.0.1:" + std::to_string(status.port) : "UDP  Unavailable";
+    const auto mcp = mcp_endpoint.empty() ? "MCP  Unavailable" : "MCP  " + mcp_endpoint;
+    gtk_label_set_text(GTK_LABEL(bridge_endpoint_), udp.c_str());
+    gtk_label_set_text(GTK_LABEL(mcp_endpoint_), mcp.c_str());
+    const auto detail = error.empty() ? status.error : status.error.empty() ? error : error + " · " + status.error;
+    gtk_widget_set_tooltip_text(bridge_activity_, detail.empty() ? nullptr : detail.c_str());
+    gtk_label_set_ellipsize(GTK_LABEL(bridge_activity_), PANGO_ELLIPSIZE_END);
+    const auto activity = detail.empty() ? "Frame " + std::to_string(status.frame) + " · " +
+        std::to_string(status.received_events) + " events · " + std::to_string(status.missing_events) + " missing packets" : detail;
+    gtk_label_set_text(GTK_LABEL(bridge_activity_), activity.c_str());
 }
 
 void ProfilerView::preparing(const std::string& title, bool rebuilding) {

@@ -7,7 +7,9 @@ Additional attribution terms: see NOTICE in the repository root.
 
 # Profiling and frame analysis
 
-The Profiler tab shows live console output and the status of an externally launched game. Its output-only VTE terminal receives merged stdout/stderr directly, interprets terminal colors and progress updates, and retains 5000 scrollback lines. The runtime also writes the complete raw session log at `<framerift-data-root>/logs/<game-id>/<session-id>/game.log`; display-only LF-to-CRLF normalization leaves that file unchanged. There is no shell, PTY or file polling. Disable Follow output and scroll up to inspect earlier output; the Copy button, Ctrl+C or Ctrl+Shift+C copies selected text. Logs remain visible after process exit and the terminal clears for the next session. Timing charts, frame analysis and structured telemetry are planned.
+The Profiler tab shows live console output and the status of an externally launched game. Its output-only VTE terminal receives merged stdout/stderr directly, interprets terminal colors and progress updates, and retains 5000 scrollback lines. The runtime also writes the complete raw session log at `<framerift-data-root>/logs/<game-id>/<session-id>/game.log`; display-only LF-to-CRLF normalization leaves that file unchanged. There is no shell, PTY or file polling. Disable Follow output and scroll up to inspect earlier output; the Copy button, Ctrl+C or Ctrl+Shift+C copies selected text. Logs remain visible after process exit and the terminal clears for the next session.
+
+FrameRift also implements a [UDP debug bridge and MCP server](debug-bridge.md). The Profiler shows the actual connection, server addresses, current reported frame and event/packet-gap counters. Events are buffered in memory and available through MCP. Timing charts, frame analysis and the AnyPS5 event producer remain planned; existing console logs continue independently.
 
 Confirmed AnyPS5 details refer to [upstream `197ffac97203d715a258a28b432fa2eedbf8be6f`](https://github.com/boykopovar/AnyPS5/tree/197ffac97203d715a258a28b432fa2eedbf8be6f). This source snapshot is not a FrameRift runtime benchmark. See [AnyPS5 integration](anyps5-integration.md), [Controller and input](controller-input.md) and the [project overview](../README.md).
 
@@ -98,7 +100,7 @@ The following fields are a **proposal**, not an existing AnyPS5 protocol:
 
 A frame ID is valid within a uniquely named session and measurement source. It is not globally unique across restarts. Late GPU data should retain its original submission/batch correlation; arrival time in the launcher is not frame attribution.
 
-A local socket, Windows named pipe or bounded shared-memory channel should be investigated for transport. The choice remains open. The first protocol proposal should contain as little data as necessary and clear version/capability negotiation. The data model separates diagnostic text, log events and precise measurements.
+FrameRift's first transport is now IPv4 loopback UDP with versioned JSON packets, session/peer pinning and advertised command capabilities. The [implemented protocol](debug-bridge.md) deliberately leaves metric payload semantics and runtime execution to the adapter. The richer measurement fields above remain proposals.
 
 ## Overhead and backpressure
 
@@ -120,7 +122,7 @@ The planned IPC connection should use a bounded producer buffer with visible dro
 | Timing import | Can versions, units, partially written lines and data gaps be detected reliably? |
 | Frame correlation | How are multiple outputs, queued work and late batches attributed? |
 | GPU timeline | Which new events and time calibration are needed beyond the existing aggregates? |
-| IPC | Which local transport has low overhead and remains robust when disconnected? |
+| IPC | What event rate and runtime overhead can the implemented UDP transport sustain? |
 | Overhead | How do game-only execution, logs, frame timing, GPU profiling and FrameRift display compare? |
 | UI | Do navigation and charts remain responsive under heavy measurement or log traffic? |
 

@@ -134,12 +134,23 @@ std::string unique_id() {
 }
 
 Process spawn_process(const std::vector<std::string>& command, const std::filesystem::path& directory,
-    const std::filesystem::path& log_path = {}, const std::filesystem::path& memory_log_path = {}) {
+    const std::filesystem::path& log_path = {}, const std::filesystem::path& memory_log_path = {},
+    const BridgeLaunch& bridge = {}, const std::string& game_id = {}) {
     if (command.empty()) throw std::runtime_error("The launch command is empty");
     const std::unique_ptr<GSubprocessLauncher, decltype(&g_object_unref)> launcher(
         g_subprocess_launcher_new(static_cast<GSubprocessFlags>(G_SUBPROCESS_FLAGS_STDERR_MERGE |
             (log_path.empty() ? G_SUBPROCESS_FLAGS_STDOUT_PIPE : G_SUBPROCESS_FLAGS_NONE))), g_object_unref);
     g_subprocess_launcher_unsetenv(launcher.get(), "STEAMGRIDDB_API_KEY");
+    for (const auto* name : {"FRAMERIFT_BRIDGE_HOST", "FRAMERIFT_BRIDGE_PORT", "FRAMERIFT_BRIDGE_SESSION", "FRAMERIFT_GAME_ID"}) {
+        g_subprocess_launcher_unsetenv(launcher.get(), name);
+    }
+    if (bridge.port != 0) {
+        if (bridge.session_id.empty() || game_id.empty()) throw std::runtime_error("The bridge launch identity is missing");
+        g_subprocess_launcher_setenv(launcher.get(), "FRAMERIFT_BRIDGE_HOST", "127.0.0.1", true);
+        g_subprocess_launcher_setenv(launcher.get(), "FRAMERIFT_BRIDGE_PORT", std::to_string(bridge.port).c_str(), true);
+        g_subprocess_launcher_setenv(launcher.get(), "FRAMERIFT_BRIDGE_SESSION", bridge.session_id.c_str(), true);
+        g_subprocess_launcher_setenv(launcher.get(), "FRAMERIFT_GAME_ID", game_id.c_str(), true);
+    }
     if (!memory_log_path.empty()) {
         g_subprocess_launcher_setenv(launcher.get(), "ANYPS5_MEMORY_LOG", memory_log_path.string().c_str(), true);
     }
@@ -332,9 +343,9 @@ PreparedGame prepare_game(const Game& game, const LaunchSettings& settings,
     return prepared;
 }
 
-void launch_game(const PreparedGame& game, GameOutput output, GameFinished finished) {
+void launch_game(const PreparedGame& game, GameOutput output, GameFinished finished, const BridgeLaunch& bridge) {
     auto log = std::make_unique<GameLog>(game.log_path, std::move(output), std::move(finished));
-    auto process = spawn_process(game.command, game.working_directory, {}, game.log_path.parent_path() / "memory.jsonl");
+    auto process = spawn_process(game.command, game.working_directory, {}, game.log_path.parent_path() / "memory.jsonl", bridge, game.game_id);
     auto* capture = log.release();
     capture->start(process.release());
 }

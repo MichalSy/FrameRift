@@ -18,12 +18,13 @@ FrameRift is an experimental native game library and runtime console for AnyPS5.
 - Automatic game-folder scanning, metadata titles, search, sorting and recently played games.
 - SteamGridDB artwork, an offline SQLite/image cache and animated WebP heroes; API credentials stay in the desktop keyring.
 - Linux launch and rebuild, plus a Profiler console with live output and complete session logs. Original games, saves and shared runtime libraries are preserved.
+- A local UDP debug bridge and HTTP MCP server for buffered runtime events and asynchronous commands, with a game-connection indicator. The AnyPS5 sender is a separate integration step.
 
 Windows, actual gameplay compatibility and embedded game windows remain unverified. Frame timing, CPU/GPU analysis and controller navigation are planned.
 
 ## Build and run
 
-Requires a C++20 compiler, CMake 3.20+, Ninja, pkg-config, GTK4 4.12+, GTK4 VTE 0.70+ (`vte-2.91-gtk4`), SQLite3, libcurl 7.85+, JSON-GLib, GIO, libsecret, libwebp/libwebpdemux and `glib-compile-resources`, including development packages. Game launch also requires Python 3, Linux cgroup v2, a systemd user manager and the AnyPS5 `run_game.py` and `run_with_memory_guard.py` tools.
+Requires a C++20 compiler, CMake 3.20+, Ninja, pkg-config, GTK4 4.12+, GTK4 VTE 0.70+ (`vte-2.91-gtk4`), SQLite3, libcurl 7.85+, libsoup 3.2+, JSON-GLib, GIO, libsecret, libwebp/libwebpdemux and `glib-compile-resources`, including development packages. Game launch also requires Python 3, Linux cgroup v2, a systemd user manager and the AnyPS5 `run_game.py` and `run_with_memory_guard.py` tools.
 
 ```sh
 cmake -S . -B build -G Ninja -DCMAKE_INSTALL_PREFIX="$HOME/.local"
@@ -33,6 +34,8 @@ ctest --test-dir build --output-on-failure
 ```
 
 In **Settings**, add game folders and configure the modified AnyPS5 checkout, compatible runtime libraries and relinker executable. Save a SteamGridDB API key there to load artwork; `STEAMGRIDDB_API_KEY` overrides the saved key. Cached artwork works offline.
+
+While FrameRift is open, MCP clients can use `http://127.0.0.1:47653/mcp` with Streamable HTTP. The Profiler displays both server addresses and the actual UDP connection state. See [Debug bridge and MCP](docs/debug-bridge.md) for configuration, tools and the runtime wire protocol.
 
 On Linux, `cmake --install build` installs the app, desktop menu entry and icon under the configured prefix. Generated code uses the user cache; saves and session logs use the shared FrameRift data directory, keyed by game ID.
 
@@ -46,6 +49,7 @@ On Linux, `cmake --install build` installs the app, desktop menu entry and icon 
 - [Build dependencies](docs/technical-stack.md) and [platforms](docs/toolkit-and-platforms.md)
 - [AnyPS5 integration](docs/anyps5-integration.md) and [game-window integration](docs/game-window-integration.md)
 - [Profiling](docs/profiling.md), [input](docs/controller-input.md) and [artwork](docs/artwork.md)
+- [Debug bridge and MCP](docs/debug-bridge.md)
 - [Roadmap](docs/roadmap.md), [open questions](docs/decisions-and-open-questions.md) and [image sources](assets/design/README.md)
 
 Contributions are welcome; see [CONTRIBUTING.md](CONTRIBUTING.md).

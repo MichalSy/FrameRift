@@ -6,12 +6,15 @@
 #include "library/library.hpp"
 #include "library/steamgriddb.hpp"
 #include "runtime/launch.hpp"
+#include "runtime/bridge.hpp"
+#include "runtime/mcp.hpp"
 #include "ui/profiler.hpp"
 #include "ui/hero.hpp"
 
 #include <gtk/gtk.h>
 
 #include <algorithm>
+#include <charconv>
 #include <filesystem>
 #include <iostream>
 #include <memory>
@@ -75,6 +78,18 @@ std::vector<std::string> folded_titles(const std::vector<Game>& games) {
     return result;
 }
 
+std::uint16_t server_port(const char* name, std::uint16_t fallback) {
+    const auto* value = g_getenv(name);
+    if (!value) return fallback;
+    const std::string_view text(value);
+    unsigned int port = 0;
+    const auto result = std::from_chars(text.data(), text.data() + text.size(), port);
+    if (result.ec != std::errc{} || result.ptr != text.data() + text.size() || port > 65535) {
+        throw std::runtime_error(std::string(name) + " must be a port between 0 and 65535");
+    }
+    return static_cast<std::uint16_t>(port);
+}
+
 } // namespace
 
 class Application {
@@ -84,6 +99,10 @@ public:
         games_ = visible_games();
         search_text_ = folded_titles(games_);
         if (!games_.empty()) selected_id_ = games_.front().id;
+    }
+
+    ~Application() {
+        if (bridge_source_) g_source_remove(bridge_source_);
     }
 
     int run(int argc, char** argv) {
@@ -155,6 +174,7 @@ private:
         gtk_stack_add_named(GTK_STACK(pages_), library_view(), "library");
         if (!profiler_) profiler_ = std::make_unique<ProfilerView>();
         gtk_stack_add_named(GTK_STACK(pages_), profiler_->widget(), "profiler");
+        start_servers();
         show_page("library");
         auto* keys = gtk_event_controller_key_new();
         g_signal_connect(keys, "key-pressed", G_CALLBACK(+[](GtkEventControllerKey*, guint key, guint, GdkModifierType state, gpointer data) -> gboolean {
@@ -189,6 +209,10 @@ private:
         auto* spacer = box(GTK_ORIENTATION_HORIZONTAL);
         gtk_widget_set_hexpand(spacer, true);
         gtk_box_append(GTK_BOX(row), spacer);
+        bridge_indicator_ = label("Game not connected", "bridge-indicator");
+        g_object_add_weak_pointer(G_OBJECT(bridge_indicator_), reinterpret_cast<gpointer*>(&bridge_indicator_));
+        gtk_widget_set_valign(bridge_indicator_, GTK_ALIGN_CENTER);
+        gtk_box_append(GTK_BOX(row), bridge_indicator_);
         search_ = gtk_search_entry_new();
         gtk_widget_add_css_class(search_, "game-search");
         gtk_editable_set_width_chars(GTK_EDITABLE(search_), 16);
@@ -223,6 +247,45 @@ private:
         gtk_widget_add_css_class(controls, "window-buttons");
         gtk_box_append(GTK_BOX(row), controls);
         return handle;
+    }
+
+    void start_servers() {
+        if (!bridge_) {
+            try {
+                bridge_ = std::make_unique<BridgeServer>(server_port("FRAMERIFT_UDP_PORT", 0));
+            } catch (const std::exception& error) {
+                server_error_ = error.what();
+                g_printerr("FrameRift bridge: %s\n", error.what());
+            }
+        }
+        if (bridge_ && !mcp_) {
+            try {
+                mcp_ = std::make_unique<McpServer>(*bridge_, server_port("FRAMERIFT_MCP_PORT", 47653));
+                server_error_.clear();
+            } catch (const std::exception& error) {
+                server_error_ = error.what();
+                g_printerr("FrameRift MCP: %s\n", error.what());
+            }
+        }
+        update_bridge_status();
+        if (!bridge_source_) {
+            bridge_source_ = g_timeout_add(250, +[](gpointer data) -> gboolean {
+                auto& self = *static_cast<Application*>(data);
+                self.guard([&] { self.update_bridge_status(); });
+                return G_SOURCE_CONTINUE;
+            }, this);
+        }
+    }
+
+    void update_bridge_status() {
+        const auto status = bridge_ ? bridge_->status() : BridgeStatus{};
+        if (bridge_indicator_) {
+            gtk_label_set_text(GTK_LABEL(bridge_indicator_), status.connected ? "Game connected" :
+                status.port ? "Game not connected" : "Game bridge unavailable");
+            if (status.connected) gtk_widget_add_css_class(bridge_indicator_, "connected");
+            else gtk_widget_remove_css_class(bridge_indicator_, "connected");
+        }
+        if (profiler_) profiler_->bridge_status(status, mcp_ ? mcp_->endpoint() : "", server_error_);
     }
 
     GtkWidget* navigation_tab(const char* title, const char* page) {
@@ -752,6 +815,7 @@ private:
         Application* application;
         GApplication* app;
         PreparedGame prepared;
+        std::string bridge_session;
     };
 
     void prepare_selected(GameAction action) {
@@ -795,15 +859,23 @@ private:
                     return;
                 }
                 const auto game_id = prepared->game_id;
-                auto session = std::make_shared<Session>(Session{&self, G_APPLICATION(source), std::move(*prepared)});
+                const auto bridge_session = prepared->log_path.parent_path().filename().string();
+                auto session = std::make_shared<Session>(Session{&self, G_APPLICATION(source), std::move(*prepared), bridge_session});
                 g_application_hold(session->app);
                 try {
+                    BridgeLaunch bridge_launch;
+                    if (self.bridge_) {
+                        self.bridge_->expect_session(session->bridge_session, session->prepared.game_id);
+                        bridge_launch = {self.bridge_->port(), session->bridge_session};
+                    }
                     launch_game(session->prepared, [session](std::string_view output) {
                         session->application->profiler_->output(output);
                     }, [session](GSubprocess* process, const std::string& error) {
                         auto& self = *session->application;
                         self.game_busy_ = false;
                         self.guard([&] {
+                            if (self.bridge_) self.bridge_->end_session(session->bridge_session);
+                            self.update_bridge_status();
                             if (self.window_) self.update_game_actions();
                             if (!error.empty()) {
                                 self.profiler_->failed(error);
@@ -819,8 +891,9 @@ private:
                             self.profiler_->finished("Exited normally");
                         });
                         g_application_release(session->app);
-                    });
+                    }, bridge_launch);
                 } catch (const std::exception& error) {
+                    if (self.bridge_) self.bridge_->end_session(session->bridge_session);
                     g_application_release(session->app);
                     self.game_busy_ = false;
                     if (self.window_) self.update_game_actions();
@@ -936,6 +1009,11 @@ private:
     GtkWidget* library_tab_ = nullptr;
     GtkWidget* profiler_tab_ = nullptr;
     std::unique_ptr<ProfilerView> profiler_;
+    std::unique_ptr<BridgeServer> bridge_;
+    std::unique_ptr<McpServer> mcp_;
+    guint bridge_source_ = 0;
+    GtkWidget* bridge_indicator_ = nullptr;
+    std::string server_error_;
     GtkWidget* refresh_ = nullptr;
     GtkWidget* folders_action_ = nullptr;
     GtkWidget* folders_window_ = nullptr;

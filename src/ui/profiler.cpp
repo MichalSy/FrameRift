@@ -581,9 +581,12 @@ void ProfilerView::monitoring(const MonitoringSnapshot& snapshot) {
     const std::optional<double> values[] = {stats.estimated_fps, stats.mean_interval_us,
         stats.p95_interval_us, stats.worst_interval_us};
     for (std::size_t i = 0; i < metrics_.size(); ++i) {
-        const auto text = values[i] ? number(*values[i] / (i ? 1000.0 : 1.0), i ? 2 : 1) + (i ? " ms" : " FPS") : "–";
-        gtk_label_set_text(GTK_LABEL(metrics_[i]), text.c_str());
-        gtk_widget_set_tooltip_text(metrics_[i], text.c_str());
+        const auto value = values[i] ? number(*values[i] / (i ? 1000.0 : 1.0), i ? 0 : 1) : "–";
+        const auto unit = i ? "ms" : "FPS";
+        const auto markup = values[i] ? value + " <span size=\"10240\" weight=\"normal\">" + unit + "</span>" : value;
+        gtk_label_set_markup(GTK_LABEL(metrics_[i]), markup.c_str());
+        const auto detail = values[i] ? number(*values[i] / (i ? 1000.0 : 1.0), i ? 2 : 1) + " " + unit : "–";
+        gtk_widget_set_tooltip_text(metrics_[i], detail.c_str());
         if (retained) gtk_widget_add_css_class(metrics_[i], "stale");
         else gtk_widget_remove_css_class(metrics_[i], "stale");
     }
@@ -638,7 +641,7 @@ void ProfilerView::update_resources() {
             values[1] = std::to_string(work.completed);
             if (resources.work_delta) {
                 const auto& delta = (*resources.work_delta)[work_indices[row]];
-                values[2] = number(delta.total_us / 1000.0, 2) + " ms";
+                values[2] = number(delta.total_us / 1000.0, 0) + " ms";
             }
             tip = "Process lifetime: " + std::to_string(work.started) + " started, " + std::to_string(work.completed) +
                 " completed, " + std::to_string(work.failed) + " failed; elapsed " + number(work.total_us / 1000.0, 2) +
@@ -737,7 +740,7 @@ void ProfilerView::update_frame_detail() {
     const auto frame = sample ? "Frame " + std::to_string(sample->frame) : "Frame –";
     const auto stream = sample ? "Output " + std::to_string(sample->output_handle) + " / generation " +
         std::to_string(sample->output_generation) : "Output – / generation –";
-    const auto interval = sample && sample->flip_interval_us ? "Flip interval " + number(*sample->flip_interval_us / 1000.0, 2) + " ms" : "Flip interval –";
+    const auto interval = sample && sample->flip_interval_us ? "Flip interval " + number(*sample->flip_interval_us / 1000.0, 0) + " ms" : "Flip interval –";
     gtk_label_set_text(GTK_LABEL(frame_identity_), frame.c_str());
     gtk_label_set_text(GTK_LABEL(consumer_frame_), frame.c_str());
     gtk_label_set_text(GTK_LABEL(frame_interval_), interval.c_str());
@@ -752,7 +755,8 @@ void ProfilerView::update_frame_detail() {
     }
     scope += "\n" + stream;
     gtk_widget_set_tooltip_text(frame_identity_, scope.c_str());
-    gtk_widget_set_tooltip_text(frame_interval_, interval.c_str());
+    const auto interval_detail = sample && sample->flip_interval_us ? number(*sample->flip_interval_us / 1000.0, 2) + " ms" : "–";
+    gtk_widget_set_tooltip_text(frame_interval_, interval_detail.c_str());
 }
 
 void ProfilerView::inspect_chart(double x, double y) {

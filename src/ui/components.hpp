@@ -28,10 +28,14 @@ struct MetricCard {
 };
 
 inline MetricCard metric_card(const char* title, bool primary = false) {
-    auto* root = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
+    auto* root = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 16);
     gtk_widget_add_css_class(root, "metric-card");
     gtk_widget_set_hexpand(root, true);
-    gtk_box_append(GTK_BOX(root), label(title, "metric-label"));
+    auto* heading = label(title, "metric-label");
+    gtk_widget_set_hexpand(heading, true);
+    gtk_label_set_ellipsize(GTK_LABEL(heading), PANGO_ELLIPSIZE_END);
+    gtk_widget_set_tooltip_text(heading, title);
+    gtk_box_append(GTK_BOX(root), heading);
     auto* value = label("–", "metric-value");
     gtk_label_set_xalign(GTK_LABEL(value), 1);
     gtk_label_set_ellipsize(GTK_LABEL(value), PANGO_ELLIPSIZE_END);

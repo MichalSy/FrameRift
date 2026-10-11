@@ -13,6 +13,8 @@ This is a design and proposed integration contract. FrameRift currently has a co
 
 The Profiler retains the current FrameRift header and selected game's metadata title. A session strip distinguishes process state, bridge connection and monitoring state. The workspace has four tabs: **Live**, **Captures**, **Input scripts** and **Logs**. The game continues in its existing external window; this layout does not depend on embedded rendering.
 
+The current implementation priority is monitoring. The first increment uses **Live** and **Logs** only; add **Captures** when capture actions work. Input-script editing, execution and the script sidebar in the reference image are deferred. Use the freed sidebar width for frame details and the chart.
+
 ![Live profiler design](../assets/design/profiler-live-v2.png)
 
 The Live view has a one-second overview, a selected-frame detail pane, top-consumer tables, a recent flip-interval chart, and a compact script/capture pane. The script selector offers **Run script** and **Edit script** for the current game. Logs remain a separate full console with a small recent-output strip in the Live view.
@@ -144,11 +146,30 @@ Requiring the revision prevents an AI from executing a definition changed since 
 
 ## Integration order and verification
 
-1. Agree frame identity, measurement scopes, capability names, action schema and artifact references after the AnyPS5 merge.
-2. Implement durable script editing and the profiler's disconnected/unavailable states in FrameRift; never seed example measurements into a real session.
-3. Connect minimal frame summaries and inclusive driver phases. Add GPU tables only with accurate window/frame attribution.
-4. Implement schedule registration, game-side execution, run status recovery and optional capture checkpoints. Expose the saved-script MCP tools through that shared path.
-5. Verify requested/applied frames, late rejection, duplicate commands, dropped events, cancellation, revision preservation, cache clearing, capture association and bounded buffers. Compare monitoring/capture overhead against an ordinary run; a mock design is not performance evidence.
+Start with one complete path from a successful AnyPS5 flip to genuine FrameRift FPS and interval values. A connected adapter currently sends no measurement events and advertises no command capabilities. Building the full mockup before this path exists would leave the dashboard without usable data.
+
+| Increment | Deliverable | Completion evidence |
+| --- | --- | --- |
+| 1. Frame pacing | Independent frame summaries, monitoring toggle, Live/Logs, FPS/mean/P95/worst, selected basic frame and 60-second interval chart | Real game data reaches UI and MCP; OFF/ON, stale data and bounded loss behavior are verified |
+| 2. Driver CPU consumers | Selected-frame phase count, inclusive total, maximum, waits and preparation with accurate attribution | Top consumers explain an observed slow frame without adding overlapping scopes into a false total |
+| 3. Measurement snapshots | Save retained frame data and labeled aggregate windows locally; open/export through Captures | A snapshot remains readable after monitoring stops or the game exits |
+| 4. GPU and memory | Delayed batch/program timings and memory/cache samples with real source windows | Pending/incomplete results and original frame/window attribution remain explicit |
+| 5. Requested screenshots | Asynchronous capture command, status and owned artifact references | Requested/actual frame identity and capture overhead are visible; no continuous screenshot mode is required |
+
+### First increment
+
+- Reuse successful VideoOut flip-completion hooks and existing identities. Cancelled/closed-output requests must not count as completed frames. Preserve the existing `FrameTiming` ID for global correlation; it identifies flip work, not a simulation/input tick. Use session, output handle/generation and the existing completed-flip counter to identify stream samples. Define monotonic completion timestamp, valid interval and per-stream coverage before wiring the UI. The first completion after activation or stream reset establishes a timestamp and has no interval.
+- Advertise `set_monitoring` only when the adapter implements it. Monitoring starts off. Show pending command acceptance separately from confirmed monitoring state; receipt alone does not establish activation. Continue connection heartbeats while monitoring is off.
+- Record a small fixed-size sample at the frame boundary into a bounded nonblocking buffer; the existing bridge worker serializes and sends UDP. A full buffer drops measurements with visible loss accounting. Frame completion never waits for network receipt, command acknowledgement or file output.
+- Keep this collector independent of `APS5_ENABLE_TIMING_LOG` and default file logging. Reuse measurement locations, not destructive reads of counters owned by existing log reports. More expensive CPU/GPU collectors are separate later increments.
+- Normalize accepted samples in `src/runtime` continuously, with a 60-second time limit and a sample/memory ceiling. The current 512-event diagnostic ring is separate and includes other events; at 60 frame events/second it cannot supply a 60-second chart. Copy bounded presentation data to GTK rather than collecting through periodic UI/MCP event polling.
+- Reuse the current Profiler view, game/session ownership and VTE log console. Render monitoring at most once per second with GTK labels/tables and a drawing area. Start with the four overview cards plus sample coverage, latest/worst frame selection and interval history; detailed CPU/GPU tables appear with their real producers.
+- Distinguish connection, capability support, requested/confirmed monitoring and sample freshness. A hello without a frame shows **Unavailable**, not **Frame 0**. Preserve gaps, incomplete windows and stale last-session data after disconnect/exit. Reset measurement identity/history for a new session or output generation without mixing windows across them.
+- Add a read-only normalized monitoring snapshot MCP tool using the same runtime data as Live. Existing bridge events and asynchronous commands remain available for diagnostics and control; AI clients should receive values, units, scopes, freshness and coverage together.
+
+Verify known interval arithmetic and percentile selection over actual UDP reception, hello-only state, missing/reordered/duplicate samples, session/output reset, pending/off monitoring, buffer overflow and bounded history. Check that reception continues while another tab is visible and that disconnect/process exit preserves a visibly stale final observation. Finish with a native GTK smoke check and real-game UI/MCP observation. Compare monitoring OFF/ON with the same scene, settings and cache; the design image is not performance evidence.
+
+Input scripts retain their proposed contract in this document, but their durable editor, schedule execution, status recovery, capture checkpoints and MCP tools follow the monitoring work. Their later checks cover requested/applied frames, late rejection, cancellation, saved revisions, cache clearing and capture association.
 
 Current measurement semantics and source references are in [Profiling and frame analysis](profiling.md). Current transport/commands are in [Debug bridge and MCP](debug-bridge.md), and pad/input constraints are in [Controllers and input](controller-input.md). ImageGen prompts are saved with the [design assets](../assets/design/profiler-prompts.md).
 

@@ -397,6 +397,81 @@ void check_monitoring() {
         "A new managed session inherited old monitoring history or frame identity");
 }
 
+void check_work_activity() {
+    framerift::BridgeServer bridge(0);
+    Runtime runtime(bridge.port());
+    bridge.expect_session("bridge-check-session", "PPSA01234");
+    std::uint64_t sequence = 1;
+    runtime.send(packet(sequence, "hello", R"(,"game_id":"PPSA01234","capabilities":["set_monitoring","resource_status","work_activity"],"monitoring":{"enabled":true,"epoch":1})"));
+    wait_until([&] { return bridge.status().connected; }, "Work runtime did not connect");
+    const auto sample = [&](std::uint64_t timestamp, std::uint64_t count, std::uint64_t epoch = 1) {
+        return changed(resources(++sequence, timestamp, epoch), [&](JsonObject* object) {
+            auto* activity = json_object_new();
+            for (const auto* name : framerift::resource_work_names) {
+                auto* work = json_object_new();
+                json_object_set_int_member(work, "active", 0);
+                json_object_set_int_member(work, "started", count);
+                json_object_set_int_member(work, "completed", count);
+                json_object_set_int_member(work, "failed", 0);
+                json_object_set_int_member(work, "total_us", count * 1000);
+                json_object_set_int_member(work, "max_us", 1000);
+                json_object_set_object_member(activity, name, work);
+            }
+            json_object_set_object_member(json_object_get_object_member(object, "data"), "activity", activity);
+        });
+    };
+    runtime.send(sample(10000000, 100));
+    wait_until([&] { return bridge.monitoring_snapshot().resources.has_sample; }, "Work baseline was not accepted");
+    require(!bridge.monitoring_snapshot().resources.work_delta, "First sample fabricated a work interval");
+    for (unsigned i = 1; i <= 5; ++i) {
+        runtime.send(sample(10000000 + i * 250000, 100 + i * 2));
+        wait_until([&] { return bridge.monitoring_snapshot().resources.sample->timestamp_us == 10000000 + i * 250000; }, "Work sample was not accepted");
+    }
+    auto snapshot = bridge.monitoring_snapshot();
+    require(snapshot.resources.activity_supported && snapshot.resources.work_delta && snapshot.resources.work_window_us == 1000000
+        && (*snapshot.resources.work_delta)[3].active == 0 && (*snapshot.resources.work_delta)[3].completed == 8
+        && (*snapshot.resources.work_delta)[3].total_us == 8000 && (*snapshot.resources.work_delta)[3].max_us == 1000,
+        "Short completed work vanished or the observed interval included older operations");
+    const Json encoded(bridge.monitoring_snapshot_json(false));
+    auto* resource = json_object_get_object_member(encoded.object(), "resources");
+    auto* window = json_object_get_object_member(resource, "activity_window");
+    require(window && json_object_get_int_member(window, "duration_us") == 1000000
+        && json_object_get_int_member(json_object_get_object_member(json_object_get_object_member(window, "delta"), "pipeline_build"), "completed") == 8,
+        "MCP and the typed UI work window disagree");
+    const auto malformed = bridge.status().malformed_packets;
+    runtime.send(changed(sample(11500000, 112), [](JsonObject* object) {
+        auto* activity = json_object_get_object_member(json_object_get_object_member(object, "data"), "activity");
+        json_object_set_int_member(json_object_get_object_member(activity, "gpu_present_wait"), "failed", -1);
+    }));
+    runtime.send(resources(++sequence, 11500000));
+    wait_until([&] { return bridge.status().malformed_packets >= malformed + 2; }, "Invalid or missing advertised work activity was accepted");
+    require(bridge.monitoring_snapshot().resources.sample->timestamp_us == 11250000, "Malformed work replaced valid resources");
+    runtime.send(sample(11500000, 1));
+    wait_until([&] { return bridge.monitoring_snapshot().resources.sample->timestamp_us == 11500000; }, "Reset sample was not accepted");
+    require(!bridge.monitoring_snapshot().resources.work_delta, "Decreasing counters underflowed the work delta");
+    runtime.send(packet(++sequence, "heartbeat", R"(,"monitoring":{"enabled":false,"epoch":2})"));
+    wait_until([&] { return !bridge.monitoring_snapshot().enabled; }, "Work monitoring did not stop");
+    require(bridge.monitoring_snapshot().resources.sample->activity.has_value(), "OFF erased retained work data");
+    runtime.send(sample(20000000, 200, 3));
+    wait_until([&] { return bridge.monitoring_snapshot().monitoring_epoch == 3; }, "Work reactivation did not advance epoch");
+    require(!bridge.monitoring_snapshot().resources.work_delta, "New ON epoch inherited a work baseline");
+    runtime.send(timing(++sequence, 500, 1, 20000000, "null", 3));
+    runtime.send(timing(++sequence, 501, 2, 20010000, "10000", 3));
+    wait_until([&] { return bridge.monitoring_snapshot().has_frames; }, "Work test frames were not accepted");
+    wait_until([&] { return bridge.monitoring_snapshot().stale; }, "Work test frame age did not expire");
+    runtime.send(changed(sample(20250000, 200, 3), [](JsonObject* object) {
+        auto* activity = json_object_get_object_member(json_object_get_object_member(object, "data"), "activity");
+        auto* work = json_object_get_object_member(activity, "gpu_present_wait");
+        json_object_set_int_member(work, "active", 1);
+        json_object_set_int_member(work, "started", 201);
+    }));
+    wait_until([&] { return bridge.monitoring_snapshot().resources.sample->timestamp_us == 20250000; }, "Active wait sample was not accepted");
+    require(bridge.monitoring_snapshot().stall_evidence == "instrumented_work_active", "A stalled frame with an active GPU wait was labeled idle");
+    runtime.send(sample(20500000, 201, 3));
+    wait_until([&] { return bridge.monitoring_snapshot().resources.sample->timestamp_us == 20500000; }, "Inactive wait sample was not accepted");
+    require(bridge.monitoring_snapshot().stall_evidence == "unknown", "An unexplained stalled frame was labeled idle");
+}
+
 void check_resources() {
     framerift::BridgeServer bridge(0);
     Runtime runtime(bridge.port());
@@ -444,7 +519,7 @@ void check_resources() {
     runtime.send(resources(++sequence, 12000000, 3));
     wait_until([&] { return bridge.monitoring_snapshot().resources.sample->timestamp_us == 12000000; }, "Periodic resource refresh was not accepted");
     snapshot = bridge.monitoring_snapshot();
-    require(snapshot.stale && !snapshot.resources.stale && snapshot.resources.state == "active" && bridge.status().frame == 501 &&
+    require(snapshot.stale && snapshot.stall_evidence == "unknown" && !snapshot.resources.stale && snapshot.resources.state == "active" && bridge.status().frame == 501 &&
         snapshot.samples.size() == 2, "Resource freshness refreshed stale frame timing or changed frame identity");
     near(snapshot.stats.estimated_fps, 100.0, "Resource traffic changed source-time FPS");
     near(snapshot.resources.gpu_heap_age_ms, *snapshot.resources.age_ms + 4000.0, "Resource refresh hid an older heap sample");
@@ -700,6 +775,7 @@ int main() {
         bridge.end_session("ring-check-session");
         check_monitoring();
         check_resources();
+        check_work_activity();
         std::cout << "UDP session, frame and resource monitoring, command receipt and HTTP MCP checks passed\n";
         return 0;
     } catch (const std::exception& error) {

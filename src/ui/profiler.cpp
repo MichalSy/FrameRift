@@ -320,6 +320,17 @@ ProfilerView::ProfilerView(std::function<void(bool)> request_monitoring)
         gtk_widget_set_hexpand(shader_values_[i], true);
         gtk_grid_attach(GTK_GRID(resource_grid), shader_values_[i], 1, i, 1, 1);
     }
+    const char* work_labels[] = {"Specialization", "Pipeline build", "Pipeline optimization", "Shader modules",
+        "Present / fence", "Acquire / fence", "Device / queue idle", "Graphics fence", "Queue submission"};
+    for (unsigned i = 0; i < work_values_.size(); ++i) {
+        auto* heading = label(work_labels[i], "resource-label");
+        gtk_grid_attach(GTK_GRID(resource_grid), heading, 0, i + 4, 1, 1);
+        work_values_[i] = label("Unavailable", "resource-value");
+        gtk_label_set_xalign(GTK_LABEL(work_values_[i]), 1);
+        gtk_label_set_ellipsize(GTK_LABEL(work_values_[i]), PANGO_ELLIPSIZE_END);
+        gtk_widget_set_hexpand(work_values_[i], true);
+        gtk_grid_attach(GTK_GRID(resource_grid), work_values_[i], 1, i + 4, 1, 1);
+    }
     const char* memory_labels[] = {"Process RSS", "Sampled cache", "Storage cache", "GPU heap"};
     const char* memory_tips[] = {
         "Resident memory of the game process; separate from shader payload and GPU memory.",
@@ -330,7 +341,7 @@ ProfilerView::ProfilerView(std::function<void(bool)> request_monitoring)
     for (unsigned i = 0; i < memory_values_.size(); ++i) {
         auto* heading = label(memory_labels[i], "resource-label");
         gtk_widget_set_tooltip_text(heading, memory_tips[i]);
-        gtk_grid_attach(GTK_GRID(resource_grid), heading, 0, i + 4, 1, 1);
+        gtk_grid_attach(GTK_GRID(resource_grid), heading, 0, i + 13, 1, 1);
         if (i == 3) heap_label_ = heading;
         auto* value_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
         memory_values_[i] = label("Unavailable", "resource-value");
@@ -344,7 +355,7 @@ ProfilerView::ProfilerView(std::function<void(bool)> request_monitoring)
             gtk_widget_set_visible(memory_gauges_[i - 1], false);
             gtk_box_append(GTK_BOX(value_box), memory_gauges_[i - 1]);
         }
-        gtk_grid_attach(GTK_GRID(resource_grid), value_box, 1, i + 4, 1, 1);
+        gtk_grid_attach(GTK_GRID(resource_grid), value_box, 1, i + 13, 1, 1);
     }
     gtk_box_append(GTK_BOX(resource_panel_), resource_grid);
     resource_scope_ = label("Latest resource sample · unavailable", "resource-scope");
@@ -586,7 +597,16 @@ void ProfilerView::update_resources() {
     if (available && resources.age_ms) scope += " · " + number(*resources.age_ms / 1000.0) + " s ago";
     else scope += " · unavailable";
     if (retained) scope += " · retained";
+    if (resources.work_delta) scope += "\nWork window " + number(resources.work_window_us / 1000000.0) + " s · elapsed wall time";
+    else scope += "\nWork window unavailable";
+    if (!monitoring_.stall_evidence.empty())
+        scope += monitoring_.stall_evidence == "instrumented_work_active" ?
+            "\nNo fresh frames · instrumented work active" : "\nNo fresh frames · stall cause unknown";
     gtk_label_set_text(GTK_LABEL(resource_scope_), scope.c_str());
+    for (auto* value : work_values_) {
+        gtk_label_set_text(GTK_LABEL(value), "Unavailable");
+        gtk_widget_set_tooltip_text(value, nullptr);
+    }
     for (auto* value : memory_values_) gtk_widget_remove_css_class(value, "stale");
     for (auto* gauge : memory_gauges_) gtk_widget_remove_css_class(gauge, "stale");
     if (!available) {
@@ -626,6 +646,34 @@ void ProfilerView::update_resources() {
         " writes, " + std::to_string(shaders.disk_cache_load_failures) + " load failures, " +
         std::to_string(shaders.disk_cache_write_failures) + " write failures.";
     gtk_widget_set_tooltip_text(shader_values_[3], cache.c_str());
+    if (sample.activity) {
+        for (unsigned i = 0; i < sample.activity->size(); ++i) {
+            const auto& work = (*sample.activity)[i];
+            std::string text = std::to_string(work.active) + " active";
+            if (resources.work_delta) {
+                const auto& delta = (*resources.work_delta)[i];
+                text += " · " + std::to_string(delta.completed) + " done";
+                if (delta.failed) text += " · " + std::to_string(delta.failed) + " failed";
+                text += " · " + number(delta.total_us / 1000.0) + " ms";
+            } else text += " · window unavailable";
+            if (i == 0) text = std::to_string(shaders.preparation_queue_pending) + " queued · " + text;
+            if (i == 4) text = std::to_string(shaders.pipeline_optimization_queue_pending) + " queued · " + text;
+            auto* widget = i < 2 ? shader_values_[i] : work_values_[i - 2];
+            gtk_label_set_text(GTK_LABEL(widget), text.c_str());
+            const auto tip = text + "\nObserved work window: " + number(resources.work_window_us / 1000000.0) +
+                " s. Duration includes completed and failed attempts.\nProcess lifetime: " +
+                std::to_string(work.started) + " started, " + std::to_string(work.completed) + " completed, " +
+                std::to_string(work.failed) + " failed; elapsed " + number(work.total_us / 1000.0) +
+                " ms; longest " + number(work.max_us / 1000.0) +
+                " ms.\nElapsed wall time includes scheduling/waits. Nested work overlaps; do not sum. This is not GPU execution time.\nSpecialization includes disk-cache lookup and SPIR-V optimization. Present includes queue-present calls and presentation fences. Idle includes retirement and synchronization.";
+            gtk_widget_set_tooltip_text(widget, tip.c_str());
+        }
+    } else {
+        const auto build = std::to_string(shaders.pipeline_builds_active) + " active · " + std::to_string(shaders.pipeline_builds_completed) + " total";
+        gtk_label_set_text(GTK_LABEL(work_values_[1]), build.c_str());
+        const auto optimization = std::to_string(shaders.pipeline_optimization_queue_pending) + " queued · " + std::to_string(shaders.pipeline_optimizations_active) + " active";
+        gtk_label_set_text(GTK_LABEL(work_values_[2]), optimization.c_str());
+    }
     const auto source_age = [](const std::optional<double>& age) {
         return age ? number(*age / 1000.0) + " s old" : std::string("age unavailable");
     };

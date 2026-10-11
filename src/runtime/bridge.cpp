@@ -176,6 +176,23 @@ MonitoringSample timing_sample(JsonObject* object, JsonObject* data) {
     return sample;
 }
 
+constexpr std::array<std::pair<const char*, std::uint64_t ResourceWorkState::*>, 6> resource_work_fields = {{
+    {"active", &ResourceWorkState::active}, {"started", &ResourceWorkState::started},
+    {"completed", &ResourceWorkState::completed}, {"failed", &ResourceWorkState::failed},
+    {"total_us", &ResourceWorkState::total_us}, {"max_us", &ResourceWorkState::max_us}
+}};
+
+JsonObject* activity_json(const ResourceActivity& activity) {
+    auto* object = json_object_new();
+    for (unsigned i = 0; i < activity.size(); ++i) {
+        auto* work = json_object_new();
+        for (const auto& [name, field] : resource_work_fields)
+            json_object_set_int_member(work, name, activity[i].*field);
+        json_object_set_object_member(object, resource_work_names[i], work);
+    }
+    return object;
+}
+
 ResourceSample resource_sample(JsonObject* data) {
     ResourceSample sample;
     sample.timestamp_us = unsigned_member(data, "timestamp_us");
@@ -186,6 +203,15 @@ ResourceSample resource_sample(JsonObject* data) {
     auto* memory = object_member(data, "memory");
     for (const auto& [name, field] : resource_memory_fields)
         sample.memory.*field = nullable_unsigned_member(memory, name);
+    if (json_object_has_member(data, "activity")) {
+        auto* activity = object_member(data, "activity");
+        sample.activity.emplace();
+        for (unsigned i = 0; i < resource_work_names.size(); ++i) {
+            auto* work = object_member(activity, resource_work_names[i]);
+            for (const auto& [name, field] : resource_work_fields)
+                (*sample.activity)[i].*field = unsigned_member(work, name);
+        }
+    }
     const auto& values = sample.memory;
     if (values.process_rss_bytes.has_value() != values.process_rss_timestamp_us.has_value())
         throw std::runtime_error("RSS bytes and timestamp must be available together");
@@ -265,6 +291,7 @@ struct BridgeServer::Impl {
     std::deque<MonitoringSample> monitoring_samples;
     Clock::time_point last_resource;
     std::optional<ResourceSample> resource;
+    std::deque<ResourceSample> resource_history;
 
     explicit Impl(std::uint16_t port) {
         GError* error = nullptr;
@@ -321,6 +348,7 @@ struct BridgeServer::Impl {
     void clear_monitoring() {
         monitoring_samples.clear();
         resource.reset();
+        resource_history.clear();
         monitoring_baseline_known = false;
         monitoring_truncated = false;
         monitoring_drops = 0;
@@ -390,7 +418,15 @@ struct BridgeServer::Impl {
             (sample.monitoring_epoch == monitoring_epoch && !monitoring_enabled))) return;
         if (resource && sample.monitoring_epoch == resource->monitoring_epoch && sample.timestamp_us <= resource->timestamp_us)
             throw std::runtime_error("Resource source timestamp is not increasing");
+        if (sample.activity && !capabilities.contains("work_activity"))
+            throw std::runtime_error("Unadvertised work activity");
+        if (capabilities.contains("work_activity") && !sample.activity)
+            throw std::runtime_error("Missing work activity");
         update_monitoring(true, sample.monitoring_epoch);
+        resource_history.push_back(sample);
+        while (resource_history.size() > 64 || (resource_history.size() > 2 &&
+            sample.timestamp_us - resource_history.front().timestamp_us > 10000000))
+            resource_history.pop_front();
         resource = std::move(sample);
         last_resource = Clock::now();
     }
@@ -807,6 +843,31 @@ MonitoringSnapshot BridgeServer::monitoring_snapshot() const {
             snapshot.age_ms = std::chrono::duration<double, std::milli>(Clock::now() - impl_->last_sample).count();
         snapshot.resources.supported = impl_->capabilities.contains("resource_status");
         snapshot.resources.sample = impl_->resource;
+        snapshot.resources.activity_supported = impl_->capabilities.contains("work_activity");
+        if (impl_->resource && impl_->resource->activity && impl_->resource_history.size() > 1) {
+            const auto& latest = *impl_->resource;
+            const auto start = latest.timestamp_us > 1000000 ? latest.timestamp_us - 1000000 : 0;
+            const ResourceSample* baseline = &impl_->resource_history.front();
+            for (const auto& item : impl_->resource_history) {
+                if (item.timestamp_us > start) break;
+                baseline = &item;
+            }
+            if (baseline->activity && baseline->timestamp_us < latest.timestamp_us) {
+                ResourceActivity delta = *latest.activity;
+                bool valid = true;
+                for (unsigned i = 0; i < delta.size(); ++i) {
+                    for (const auto& [name, field] : resource_work_fields) {
+                        if (field == &ResourceWorkState::active || field == &ResourceWorkState::max_us) continue;
+                        if (delta[i].*field < (*baseline->activity)[i].*field) valid = false;
+                        else delta[i].*field -= (*baseline->activity)[i].*field;
+                    }
+                }
+                if (valid) {
+                    snapshot.resources.work_delta = delta;
+                    snapshot.resources.work_window_us = latest.timestamp_us - baseline->timestamp_us;
+                }
+            }
+        }
         if (impl_->resource)
             snapshot.resources.age_ms = std::chrono::duration<double, std::milli>(Clock::now() - impl_->last_resource).count();
     }
@@ -835,6 +896,12 @@ MonitoringSnapshot BridgeServer::monitoring_snapshot() const {
     else if (!snapshot.enabled) snapshot.state = "disabled";
     else if (!snapshot.has_frames) snapshot.state = "waiting";
     else snapshot.state = snapshot.stale ? "stale" : "active";
+    if (snapshot.connected && snapshot.enabled && snapshot.stale) {
+        bool active = false;
+        if (resources.sample && resources.sample->activity && !resources.stale)
+            for (const auto& work : *resources.sample->activity) active = active || work.active != 0;
+        snapshot.stall_evidence = active ? "instrumented_work_active" : "unknown";
+    }
     if (!snapshot.has_frames) return snapshot;
     snapshot.output_handle = snapshot.samples.back().output_handle;
     snapshot.output_generation = snapshot.samples.back().output_generation;
@@ -893,9 +960,23 @@ std::string BridgeServer::monitoring_snapshot_json(bool include_history) const {
     };
     number(object, "age_ms", snapshot.age_ms);
     json_object_set_int_member(object, "monitoring_epoch", snapshot.monitoring_epoch);
+    if (snapshot.stall_evidence.empty()) json_object_set_null_member(object, "stall_evidence");
+    else json_object_set_string_member(object, "stall_evidence", snapshot.stall_evidence.c_str());
     auto* resources = json_object_new();
     const auto& resource = snapshot.resources;
     json_object_set_boolean_member(resources, "supported", resource.supported);
+    json_object_set_boolean_member(resources, "activity_supported", resource.activity_supported);
+    if (resource.sample && resource.sample->activity)
+        json_object_set_object_member(resources, "activity", activity_json(*resource.sample->activity));
+    else json_object_set_null_member(resources, "activity");
+    if (resource.work_delta) {
+        auto* window = json_object_new();
+        json_object_set_int_member(window, "duration_us", resource.work_window_us);
+        json_object_set_int_member(window, "start_us", resource.sample->timestamp_us - resource.work_window_us);
+        json_object_set_int_member(window, "end_us", resource.sample->timestamp_us);
+        json_object_set_object_member(window, "delta", activity_json(*resource.work_delta));
+        json_object_set_object_member(resources, "activity_window", window);
+    } else json_object_set_null_member(resources, "activity_window");
     json_object_set_boolean_member(resources, "has_sample", resource.has_sample);
     json_object_set_boolean_member(resources, "stale", resource.stale);
     json_object_set_string_member(resources, "state", resource.state.c_str());
@@ -926,6 +1007,11 @@ std::string BridgeServer::monitoring_snapshot_json(bool include_history) const {
     for (const auto& [name, value] : std::initializer_list<std::pair<const char*, const char*>>{
         {"snapshot", "runtime_process_resources_independent_of_videoout"},
         {"shader_counters", "process_lifetime"},
+        {"activity", "process_lifetime_attempts_active_gauges_and_elapsed_wall_time"},
+        {"activity_window", "observed_source_interval_approximately_last_1s_reported_duration"},
+        {"activity_delta_max_us", "process_lifetime_max_not_window_max"},
+        {"activity_elapsed", "nested_overlapping_not_additive_not_cpu_busy_or_gpu_execution"},
+        {"stall_coverage", "instrumented_work_only_other_cpu_io_locks_and_gpu_work_unknown"},
         {"shader_gauges", "latest_sample"},
         {"shader_bytes", "retained_cpu_source_and_variant_spirv_excluding_ir_metadata_gpu_memory"},
         {"preparation_queue", "jobs_not_variants"},

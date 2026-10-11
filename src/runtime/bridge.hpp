@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -87,14 +88,34 @@ struct ResourceMemoryState {
     std::optional<std::uint64_t> gpu_heap_timestamp_us;
 };
 
+inline constexpr std::array<const char*, 11> resource_work_names = {
+    "preparation", "translation", "specialization", "pipeline_build", "pipeline_optimization",
+    "shader_module", "gpu_present_wait", "gpu_acquire_wait", "gpu_idle_wait", "gpu_graphics_wait", "gpu_submit"
+};
+
+struct ResourceWorkState {
+    std::uint64_t active = 0;
+    std::uint64_t started = 0;
+    std::uint64_t completed = 0;
+    std::uint64_t failed = 0;
+    std::uint64_t total_us = 0;
+    std::uint64_t max_us = 0;
+};
+
+using ResourceActivity = std::array<ResourceWorkState, resource_work_names.size()>;
+
 struct ResourceSample {
     std::uint64_t timestamp_us = 0;
     std::uint64_t monitoring_epoch = 0;
     ResourceShaderState shaders;
     ResourceMemoryState memory;
+    std::optional<ResourceActivity> activity;
 };
 
 struct ResourceSnapshot {
+    bool activity_supported = false;
+    std::uint64_t work_window_us = 0;
+    std::optional<ResourceActivity> work_delta;
     bool supported = false;
     bool has_sample = false;
     bool stale = false;
@@ -113,6 +134,7 @@ struct MonitoringSnapshot {
     bool has_frames = false;
     bool stale = false;
     bool history_truncated = false;
+    std::string stall_evidence;
     std::optional<bool> requested_enabled;
     std::string command_id;
     std::string command_status;

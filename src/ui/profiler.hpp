@@ -73,6 +73,7 @@ private:
     GtkWidget* resource_state_ = nullptr;
     GtkWidget* resource_scope_ = nullptr;
     std::array<GtkWidget*, 4> shader_values_{};
+    std::array<GtkWidget*, 9> work_values_{};
     std::array<GtkWidget*, 4> memory_values_{};
     std::array<GtkWidget*, 3> memory_gauges_{};
     GtkWidget* heap_label_ = nullptr;

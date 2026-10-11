@@ -8,6 +8,7 @@
 #include "runtime/launch.hpp"
 #include "runtime/bridge.hpp"
 #include "runtime/mcp.hpp"
+#include "runtime/session.hpp"
 #include "ui/profiler.hpp"
 #include "ui/hero.hpp"
 
@@ -258,9 +259,17 @@ private:
                 g_printerr("FrameRift bridge: %s\n", error.what());
             }
         }
+        if (!game_session_) {
+            game_session_ = std::make_unique<GameSession>(library_, std::filesystem::path(database_path_).parent_path(),
+                std::filesystem::path(g_get_user_data_dir()) / "framerift",
+                G_APPLICATION(gtk_window_get_application(GTK_WINDOW(window_))), bridge_.get(),
+                [this](const GameSessionStatus& status) { guard([&] { session_changed(status); }); },
+                [this](std::string_view output) { profiler_->output(output); });
+        }
+        game_session_->set_bridge(bridge_.get());
         if (bridge_ && !mcp_) {
             try {
-                mcp_ = std::make_unique<McpServer>(*bridge_, server_port("FRAMERIFT_MCP_PORT", 47653));
+                mcp_ = std::make_unique<McpServer>(*bridge_, server_port("FRAMERIFT_MCP_PORT", 47653), game_session_.get());
                 server_error_.clear();
             } catch (const std::exception& error) {
                 server_error_ = error.what();
@@ -516,18 +525,7 @@ private:
     }
 
     std::vector<Game> visible_games() const {
-        auto games = library_.games();
-        const auto folders = library_.game_folders();
-        std::erase_if(games, [&](const Game& game) {
-            if (game.is_demo) return !folders.empty();
-            if (game.installation_path.empty()) return false;
-            const std::filesystem::path installation(game.installation_path);
-            return std::none_of(folders.begin(), folders.end(), [&](const std::string& folder) {
-                const std::filesystem::path root(folder);
-                return std::mismatch(root.begin(), root.end(), installation.begin(), installation.end()).first == root.end();
-            });
-        });
-        return games;
+        return library_.visible_games();
     }
 
     void rebuild_library() {
@@ -787,39 +785,59 @@ private:
     }
 
     void update_game_actions() {
+        if (!play_ || !rebuild_) return;
         const auto* game = selected();
-        const bool available = game && !game->is_demo && !game->installation_path.empty();
 #ifdef __linux__
-        gtk_widget_set_sensitive(play_, available && !game_busy_);
-        gtk_widget_set_sensitive(rebuild_, available && !game_busy_);
+        const bool available = game && !game->is_demo && !game->installation_path.empty();
 #else
-        gtk_widget_set_sensitive(play_, false);
-        gtk_widget_set_sensitive(rebuild_, false);
+        const bool available = false;
+        (void)game;
 #endif
-        gtk_button_set_label(GTK_BUTTON(play_), game_busy_ && !rebuilding_ ? (preparing_ ? "Preparing…" : "Running") : "▶   Play");
-        gtk_button_set_label(GTK_BUTTON(rebuild_), game_busy_ && rebuilding_ ? "Rebuilding…" : "Rebuild");
-        gtk_widget_set_tooltip_text(play_, available ? "Start the game in its own window" : "Choose an installed game");
-        gtk_widget_set_tooltip_text(rebuild_, available ? "Recreate the game's native executable and modules" : "Choose an installed game");
+        const auto* session = game_session_ ? &game_session_->status() : nullptr;
+        const bool busy = session && session->busy();
+        const bool rebuilding = session && session->rebuilding;
+        gtk_widget_set_sensitive(play_, available && !busy);
+        gtk_widget_set_sensitive(rebuild_, available && !busy);
+        const auto settings = library_.launch_settings();
+        const bool configured = !settings.anyps5_directory.empty() && !settings.runtime_directory.empty() && !settings.relinker_path.empty();
+        gtk_widget_set_tooltip_text(play_, configured ? "Launch with the shared AnyPS5 runtime" : "Configure AnyPS5 and its shared runtime in Settings");
+        gtk_widget_set_tooltip_text(rebuild_, "Rebuild generated game code; keep saves and runtime data");
+        const char* launch_label = "▶   Play";
+        if (busy && !rebuilding) {
+            launch_label = session->state == "preparing" ? "Preparing…" : session->state == "stopping" ? "Stopping…" : "Running";
+        }
+        gtk_button_set_label(GTK_BUTTON(play_), launch_label);
+        gtk_button_set_label(GTK_BUTTON(rebuild_), busy && rebuilding ? "Rebuilding…" : "Rebuild");
     }
 
-    struct PreparationRequest {
-        Game game;
-        LaunchSettings settings;
-        std::filesystem::path cache;
-        std::filesystem::path data;
-        GameAction action;
-        std::filesystem::path conversion_log;
-    };
-
-    struct Session {
-        Application* application;
-        GApplication* app;
-        PreparedGame prepared;
-        std::string bridge_session;
-    };
+    void session_changed(const GameSessionStatus& status) {
+        if (status.state == "preparing") {
+            profiler_->preparing(status.title, status.rebuilding);
+            if (window_) show_page("profiler");
+        } else if (status.state == "running") {
+            profiler_->running(status.prepared);
+            if (window_) rebuild_library();
+        } else if (status.state == "stopping") {
+            profiler_->finished("Stopping…");
+        } else if (status.state == "rebuilt") {
+            profiler_->rebuilt(status.prepared);
+        } else if (status.state == "failed") {
+            if (status.exit_code >= 0 || status.term_signal)
+                profiler_->failed(status.error);
+            else
+                profiler_->failed(status.error, status.prepared.conversion_log_path);
+            g_printerr("FrameRift game: %s\n", status.error.c_str());
+        } else if (status.state == "stopped") {
+            profiler_->finished("Stopped");
+        } else if (status.state == "exited") {
+            profiler_->finished("Exited normally");
+        }
+        update_bridge_status();
+        if (window_) update_game_actions();
+    }
 
     void prepare_selected(GameAction action) {
-        if (game_busy_) return;
+        if (!game_session_ || game_session_->status().busy()) return;
         const auto* game = selected();
         if (!game || game->is_demo || game->installation_path.empty()) return;
         const auto settings = library_.launch_settings();
@@ -828,99 +846,7 @@ private:
             show_game_folders();
             return;
         }
-        auto request = std::make_unique<PreparationRequest>(PreparationRequest{*game, settings,
-            std::filesystem::path(database_path_).parent_path(),
-            std::filesystem::path(g_get_user_data_dir()) / "framerift", action, {}});
-        game_busy_ = true;
-        preparing_ = true;
-        rebuilding_ = action == GameAction::Rebuild;
-        profiler_->preparing(game->title, rebuilding_);
-        show_page("profiler");
-        update_game_actions();
-        auto* app = gtk_window_get_application(GTK_WINDOW(window_));
-        g_application_hold(G_APPLICATION(app));
-        auto* task = g_task_new(app, nullptr, +[](GObject* source, GAsyncResult* result, gpointer data) {
-            auto& self = *static_cast<Application*>(data);
-            GError* error = nullptr;
-            std::unique_ptr<PreparedGame> prepared(static_cast<PreparedGame*>(g_task_propagate_pointer(G_TASK(result), &error)));
-            self.preparing_ = false;
-            self.guard([&] {
-                if (error) {
-                    self.game_busy_ = false;
-                    if (self.window_) self.update_game_actions();
-                    const auto& request = *static_cast<PreparationRequest*>(g_task_get_task_data(G_TASK(result)));
-                    self.profiler_->failed(error->message, request.conversion_log);
-                    throw std::runtime_error(error->message);
-                }
-                if (static_cast<PreparationRequest*>(g_task_get_task_data(G_TASK(result)))->action == GameAction::Rebuild) {
-                    self.game_busy_ = false;
-                    if (self.window_) self.update_game_actions();
-                    self.profiler_->rebuilt(*prepared);
-                    return;
-                }
-                const auto game_id = prepared->game_id;
-                const auto bridge_session = prepared->log_path.parent_path().filename().string();
-                auto session = std::make_shared<Session>(Session{&self, G_APPLICATION(source), std::move(*prepared), bridge_session});
-                g_application_hold(session->app);
-                try {
-                    BridgeLaunch bridge_launch;
-                    if (self.bridge_) {
-                        self.bridge_->expect_session(session->bridge_session, session->prepared.game_id);
-                        bridge_launch = {self.bridge_->port(), session->bridge_session};
-                    }
-                    launch_game(session->prepared, [session](std::string_view output) {
-                        session->application->profiler_->output(output);
-                    }, [session](GSubprocess* process, const std::string& error) {
-                        auto& self = *session->application;
-                        self.game_busy_ = false;
-                        self.guard([&] {
-                            if (self.bridge_) self.bridge_->end_session(session->bridge_session);
-                            self.update_bridge_status();
-                            if (self.window_) self.update_game_actions();
-                            if (!error.empty()) {
-                                self.profiler_->failed(error);
-                                throw std::runtime_error(error);
-                            }
-                            if (!g_subprocess_get_successful(process)) {
-                                const auto status = g_subprocess_get_if_signaled(process) ?
-                                    "signal " + std::to_string(g_subprocess_get_term_sig(process)) :
-                                    "exit code " + std::to_string(g_subprocess_get_exit_status(process));
-                                self.profiler_->finished("Stopped with " + status);
-                                throw std::runtime_error("The game stopped with " + status + ".\nLog: " + session->prepared.log_path.string());
-                            }
-                            self.profiler_->finished("Exited normally");
-                        });
-                        g_application_release(session->app);
-                    }, bridge_launch);
-                } catch (const std::exception& error) {
-                    if (self.bridge_) self.bridge_->end_session(session->bridge_session);
-                    g_application_release(session->app);
-                    self.game_busy_ = false;
-                    if (self.window_) self.update_game_actions();
-                    self.profiler_->failed(error.what());
-                    throw;
-                }
-                self.profiler_->running(session->prepared);
-                self.library_.mark_played(game_id);
-                if (self.window_) self.rebuild_library();
-            });
-            g_clear_error(&error);
-            g_application_release(G_APPLICATION(source));
-        }, this);
-        g_task_set_task_data(task, request.release(), +[](gpointer data) { delete static_cast<PreparationRequest*>(data); });
-        g_task_run_in_thread(task, +[](GTask* task, gpointer, gpointer data, GCancellable*) {
-            auto& request = *static_cast<PreparationRequest*>(data);
-            try {
-                auto prepared = std::make_unique<PreparedGame>(prepare_game(request.game, request.settings, request.cache, request.data, request.action == GameAction::Rebuild));
-                g_task_return_pointer(task, prepared.release(), +[](gpointer data) { delete static_cast<PreparedGame*>(data); });
-            } catch (const ConversionError& error) {
-                request.conversion_log = error.log_path;
-                g_task_return_new_error(task, g_quark_from_static_string("framerift-launch"), 1, "%s", error.what());
-            } catch (const std::exception& error) {
-                g_task_return_new_error(task, g_quark_from_static_string("framerift-launch"), 1, "%s", error.what());
-            }
-        });
-        g_object_unref(task);
+        game_session_->start(game->id, action == GameAction::Rebuild);
     }
 
     struct Refresh {
@@ -1010,6 +936,7 @@ private:
     GtkWidget* profiler_tab_ = nullptr;
     std::unique_ptr<ProfilerView> profiler_;
     std::unique_ptr<BridgeServer> bridge_;
+    std::unique_ptr<GameSession> game_session_;
     std::unique_ptr<McpServer> mcp_;
     guint bridge_source_ = 0;
     GtkWidget* bridge_indicator_ = nullptr;
@@ -1026,10 +953,7 @@ private:
     bool saving_settings_ = false;
     GtkWidget* play_ = nullptr;
     GtkWidget* rebuild_ = nullptr;
-    bool rebuilding_ = false;
     std::optional<PendingAction> pending_action_;
-    bool game_busy_ = false;
-    bool preparing_ = false;
     bool highlight_cover_ = true;
     bool loading_ = false;
     bool refresh_pending_ = false;

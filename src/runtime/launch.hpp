@@ -37,13 +37,16 @@ struct PreparedGame {
 };
 
 PreparedGame prepare_game(const Game& game, const LaunchSettings& settings,
-    const std::filesystem::path& cache_root, const std::filesystem::path& data_root, bool rebuild = false);
+    const std::filesystem::path& cache_root, const std::filesystem::path& data_root, bool rebuild = false,
+    GCancellable* cancellable = nullptr);
 using GameOutput = std::function<void(std::string_view)>;
 using GameFinished = std::function<void(GSubprocess*, const std::string&)>;
 struct BridgeLaunch {
     std::uint16_t port = 0;
     std::string session_id;
 };
-void launch_game(const PreparedGame& game, GameOutput output, GameFinished finished, const BridgeLaunch& bridge = {});
+// The optional managed handle receives its own reference; the caller must unref it.
+void launch_game(const PreparedGame& game, GameOutput output, GameFinished finished,
+    const BridgeLaunch& bridge = {}, GSubprocess** managed_process = nullptr);
 
 } // namespace framerift

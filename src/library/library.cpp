@@ -316,6 +316,21 @@ std::vector<Game> Library::games() const {
     return result;
 }
 
+std::vector<Game> Library::visible_games() const {
+    auto result = games();
+    const auto folders = game_folders();
+    std::erase_if(result, [&](const Game& game) {
+        if (game.is_demo) return !folders.empty();
+        if (game.installation_path.empty()) return false;
+        const std::filesystem::path installation(game.installation_path);
+        return std::none_of(folders.begin(), folders.end(), [&](const std::string& folder) {
+            const std::filesystem::path root(folder);
+            return std::mismatch(root.begin(), root.end(), installation.begin(), installation.end()).first == root.end();
+        });
+    });
+    return result;
+}
+
 void Library::cache_demo(const std::vector<Game>& games) {
     std::unordered_set<std::string> ids;
     for (const auto& game : games) {

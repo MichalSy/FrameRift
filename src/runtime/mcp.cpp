@@ -5,6 +5,7 @@
 
 #include "runtime/mcp.hpp"
 #include "runtime/bridge.hpp"
+#include "runtime/session.hpp"
 
 #include <json-glib/json-glib.h>
 #include <libsoup/soup.h>
@@ -25,6 +26,11 @@ constexpr const char* current_version = "2025-11-25";
 constexpr const char* older_version = "2025-03-26";
 
 using Node = std::unique_ptr<JsonNode, decltype(&json_node_unref)>;
+
+class InvalidParams : public std::runtime_error {
+public:
+    using std::runtime_error::runtime_error;
+};
 
 Node object_node() {
     Node node(json_node_new(JSON_NODE_OBJECT), json_node_unref);
@@ -176,15 +182,25 @@ constexpr const char* tool_list = R"json({"tools":[
  {"name":"get_command","description":"Get the latest received status of a previously sent command by its command ID.","inputSchema":{"type":"object","properties":{"command_id":{"type":"string","minLength":1,"maxLength":128}},"required":["command_id"],"additionalProperties":false},"annotations":{"readOnlyHint":true,"openWorldHint":false}}
 ]})json";
 
+constexpr const char* game_tool_list = R"json({"tools":[
+ {"name":"list_games","description":"List scanned library games with stable game IDs, metadata titles and availability for launch.","inputSchema":{"type":"object","additionalProperties":false},"annotations":{"readOnlyHint":true,"openWorldHint":false}},
+ {"name":"get_game_status","description":"Get the current managed game session, preparation/process state and any asynchronous failure. Returns immediately.","inputSchema":{"type":"object","additionalProperties":false},"annotations":{"readOnlyHint":true,"openWorldHint":false}},
+ {"name":"start_game","description":"Start a scanned game by its stable game ID. Preparation and launch run asynchronously; poll get_game_status for readiness or failure. A running process does not imply a UDP runtime connection.","inputSchema":{"type":"object","properties":{"game_id":{"type":"string","minLength":1,"maxLength":128}},"required":["game_id"],"additionalProperties":false},"annotations":{"readOnlyHint":false,"destructiveHint":false,"idempotentHint":false,"openWorldHint":false}},
+ {"name":"stop_game","description":"Stop the managed game session matching the supplied stable game ID. Poll get_game_status until the process exits.","inputSchema":{"type":"object","properties":{"game_id":{"type":"string","minLength":1,"maxLength":128}},"required":["game_id"],"additionalProperties":false},"annotations":{"readOnlyHint":false,"destructiveHint":true,"idempotentHint":true,"openWorldHint":false}},
+ {"name":"get_game_log","description":"Read the last lines of the current or latest managed session log, from game output or conversion. The result identifies the source. Returns five lines by default; never waits for new output.","inputSchema":{"type":"object","properties":{"lines":{"type":"integer","minimum":1,"maximum":200,"default":5}},"additionalProperties":false},"annotations":{"readOnlyHint":true,"openWorldHint":false}}
+]})json";
+
 } // namespace
 
 struct McpServer::Impl {
     BridgeServer& bridge;
+    GameSession* games;
     SoupServer* server = nullptr;
     std::uint16_t port = 0;
     std::unordered_set<SoupServerMessage*> requests;
 
-    Impl(BridgeServer& value, std::uint16_t requested_port) : bridge(value) {
+    Impl(BridgeServer& value, std::uint16_t requested_port, GameSession* sessions)
+        : bridge(value), games(sessions) {
         server = soup_server_new("server-header", "FrameRift", nullptr);
         g_signal_connect(server, "request-started", G_CALLBACK(request_started), this);
         g_signal_connect(server, "request-finished", G_CALLBACK(request_finished), this);
@@ -323,7 +339,7 @@ struct McpServer::Impl {
     void tool_result(SoupServerMessage* message, JsonNode* id, const std::string& data, bool failed) {
         Node value = parse_json(data);
         if (!value || !JSON_NODE_HOLDS_OBJECT(value.get()))
-            throw std::runtime_error("Bridge returned invalid JSON.");
+            throw std::runtime_error("Tool returned invalid JSON.");
         Node result = object_node();
         JsonObject* object = json_node_get_object(result.get());
         JsonArray* content = json_array_new();
@@ -350,19 +366,19 @@ struct McpServer::Impl {
         std::string result;
         try {
             if (!std::strcmp(name, "get_bridge_status")) {
-                if (!only_members(arguments, {})) throw std::invalid_argument("get_bridge_status takes no arguments.");
+                if (!only_members(arguments, {})) throw InvalidParams("get_bridge_status takes no arguments.");
                 result = bridge.status_json();
             } else if (!std::strcmp(name, "get_events")) {
-                if (!only_members(arguments, {"after", "limit"})) throw std::invalid_argument("Unknown event argument.");
+                if (!only_members(arguments, {"after", "limit"})) throw InvalidParams("Unknown event argument.");
                 std::uint64_t after = 0;
                 std::size_t limit = 100;
                 if (JsonNode* node = json_object_get_member(arguments, "after")) {
-                    if (!integer(node) || json_node_get_int(node) < 0) throw std::invalid_argument("after must be a nonnegative integer.");
+                    if (!integer(node) || json_node_get_int(node) < 0) throw InvalidParams("after must be a nonnegative integer.");
                     after = static_cast<std::uint64_t>(json_node_get_int(node));
                 }
                 if (JsonNode* node = json_object_get_member(arguments, "limit")) {
                     if (!integer(node) || json_node_get_int(node) < 1 || json_node_get_int(node) > 100)
-                        throw std::invalid_argument("limit must be an integer between 1 and 100.");
+                        throw InvalidParams("limit must be an integer between 1 and 100.");
                     limit = static_cast<std::size_t>(json_node_get_int(node));
                 }
                 result = bridge.events_json(after, limit);
@@ -371,18 +387,40 @@ struct McpServer::Impl {
                 JsonObject* values = object_member(arguments, "args");
                 if (!only_members(arguments, {"name", "args"}) || !command || !*command ||
                     std::strlen(command) > 128 || !values)
-                    throw std::invalid_argument("Expected command name and object arguments.");
+                    throw InvalidParams("Expected command name and object arguments.");
                 result = bridge.send_command(command, serialize(json_object_get_member(arguments, "args")));
             } else if (!std::strcmp(name, "get_command")) {
                 const char* command = string_member(arguments, "command_id");
                 if (!only_members(arguments, {"command_id"}) || !command || !*command || std::strlen(command) > 128)
-                    throw std::invalid_argument("Expected a command_id string of 1 to 128 bytes.");
+                    throw InvalidParams("Expected a command_id string of 1 to 128 bytes.");
                 result = bridge.command_json(command);
+            } else if (games && !std::strcmp(name, "list_games")) {
+                if (!only_members(arguments, {})) throw InvalidParams("list_games takes no arguments.");
+                result = games->games_json();
+            } else if (games && !std::strcmp(name, "get_game_status")) {
+                if (!only_members(arguments, {})) throw InvalidParams("get_game_status takes no arguments.");
+                result = games->status_json();
+            } else if (games && (!std::strcmp(name, "start_game") || !std::strcmp(name, "stop_game"))) {
+                const char* game_id = string_member(arguments, "game_id");
+                if (!only_members(arguments, {"game_id"}) || !game_id || !*game_id || std::strlen(game_id) > 128)
+                    throw InvalidParams("Expected a game_id string of 1 to 128 bytes.");
+                if (!std::strcmp(name, "start_game")) games->start(game_id);
+                else games->stop(game_id);
+                result = games->status_json();
+            } else if (games && !std::strcmp(name, "get_game_log")) {
+                if (!only_members(arguments, {"lines"})) throw InvalidParams("Unknown log argument.");
+                std::size_t lines = 5;
+                if (JsonNode* node = json_object_get_member(arguments, "lines")) {
+                    if (!integer(node) || json_node_get_int(node) < 1 || json_node_get_int(node) > 200)
+                        throw InvalidParams("lines must be an integer between 1 and 200.");
+                    lines = static_cast<std::size_t>(json_node_get_int(node));
+                }
+                result = games->log_json(lines);
             } else {
                 rpc_error(message, id, -32602, "Unknown tool.");
                 return;
             }
-        } catch (const std::invalid_argument& error) {
+        } catch (const InvalidParams& error) {
             rpc_error(message, id, -32602, error.what());
             return;
         } catch (const std::exception& error) {
@@ -454,6 +492,11 @@ struct McpServer::Impl {
             json_object_set_string_member(server_info, "name", "framerift");
             json_object_set_string_member(server_info, "version", "0.1.0");
             json_object_set_object_member(value, "serverInfo", server_info);
+            if (games) json_object_set_string_member(value, "instructions",
+                "Use list_games to obtain stable game IDs. start_game and stop_game are asynchronous; "
+                "use get_game_status to observe completion or failure. get_game_log returns the last "
+                "five log lines by default. UDP runtime connectivity is reported separately by "
+                "get_bridge_status; telemetry and runtime commands require the game's bridge adapter.");
             rpc_result(message, id, result.get());
         } else if (!std::strcmp(method, "ping")) {
             Node result = object_node();
@@ -464,14 +507,21 @@ struct McpServer::Impl {
                 return;
             }
             Node result = parse_json(tool_list);
+            if (games) {
+                Node additions = parse_json(game_tool_list);
+                JsonArray* listed = json_object_get_array_member(json_node_get_object(result.get()), "tools");
+                JsonArray* extra = json_object_get_array_member(json_node_get_object(additions.get()), "tools");
+                for (guint i = 0; i < json_array_get_length(extra); ++i)
+                    json_array_add_element(listed, json_node_copy(json_array_get_element(extra, i)));
+            }
             rpc_result(message, id, result.get());
         } else if (!std::strcmp(method, "tools/call")) call_tool(message, id, params);
         else rpc_error(message, id, -32601, "Method not found.");
     }
 };
 
-McpServer::McpServer(BridgeServer& bridge, std::uint16_t port)
-    : impl_(std::make_unique<Impl>(bridge, port)) {}
+McpServer::McpServer(BridgeServer& bridge, std::uint16_t port, GameSession* games)
+    : impl_(std::make_unique<Impl>(bridge, port, games)) {}
 
 McpServer::~McpServer() = default;
 

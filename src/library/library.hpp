@@ -51,6 +51,7 @@ public:
     Library& operator=(const Library&) = delete;
 
     std::vector<Game> games() const;
+    std::vector<Game> visible_games() const;
     void cache_demo(const std::vector<Game>& games);
     std::vector<std::string> game_folders() const;
     void set_game_folders(const std::vector<std::string>& folders);

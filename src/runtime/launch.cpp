@@ -11,11 +11,49 @@
 #include <fstream>
 #include <memory>
 #include <stdexcept>
+#ifdef G_OS_UNIX
+#include <signal.h>
+#endif
 
 namespace framerift {
 namespace {
 
 using Process = std::unique_ptr<GSubprocess, decltype(&g_object_unref)>;
+
+void check_cancelled(GCancellable* cancellable) {
+    if (cancellable && g_cancellable_is_cancelled(cancellable))
+        throw std::runtime_error("Game preparation was cancelled");
+}
+
+void stop_converter(GSubprocess* process) {
+    // Conversion owns no running game scope. Allow a brief graceful stop, then reap.
+    auto* context = g_main_context_new();
+    auto* loop = g_main_loop_new(context, FALSE);
+    auto* timeout = g_timeout_source_new(1000);
+    g_source_set_callback(timeout, +[](gpointer data) -> gboolean {
+        g_subprocess_force_exit(G_SUBPROCESS(data));
+        return G_SOURCE_REMOVE;
+    }, process, nullptr);
+    g_source_attach(timeout, context);
+    g_main_context_push_thread_default(context);
+    g_subprocess_wait_async(process, nullptr, +[](GObject* source, GAsyncResult* result, gpointer data) {
+        GError* error = nullptr;
+        g_subprocess_wait_finish(G_SUBPROCESS(source), result, &error);
+        g_clear_error(&error);
+        g_main_loop_quit(static_cast<GMainLoop*>(data));
+    }, loop);
+#ifdef G_OS_UNIX
+    g_subprocess_send_signal(process, SIGTERM);
+#else
+    g_subprocess_force_exit(process);
+#endif
+    g_main_loop_run(loop);
+    g_main_context_pop_thread_default(context);
+    g_source_destroy(timeout);
+    g_source_unref(timeout);
+    g_main_loop_unref(loop);
+    g_main_context_unref(context);
+}
 
 std::filesystem::path existing_directory(const std::filesystem::path& directory, const char* description) {
     std::error_code error;
@@ -247,10 +285,12 @@ void publish_generated(const std::filesystem::path& source, const std::filesyste
 } // namespace
 
 PreparedGame prepare_game(const Game& game, const LaunchSettings& settings,
-    const std::filesystem::path& cache_root, const std::filesystem::path& data_root, bool rebuild) {
+    const std::filesystem::path& cache_root, const std::filesystem::path& data_root, bool rebuild,
+    GCancellable* cancellable) {
 #ifndef __linux__
     throw std::runtime_error("Shared-runtime launching is supported on Linux only");
 #endif
+    check_cancelled(cancellable);
     if (game.is_demo || game.installation_path.empty()) throw std::runtime_error("This game has no local installation");
     if (game.id.empty() || game.id.find_first_not_of(
             "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_") != std::string::npos) {
@@ -308,6 +348,7 @@ PreparedGame prepare_game(const Game& game, const LaunchSettings& settings,
         check_elf(executable, true);
     }
     std::filesystem::create_directories(prepared.code_directory);
+    check_cancelled(cancellable);
     std::filesystem::create_directories(prepared.working_directory);
     migrate_runtime_data(prepared.code_directory, prepared.working_directory);
     std::filesystem::create_directories(session);
@@ -317,16 +358,20 @@ PreparedGame prepare_game(const Game& game, const LaunchSettings& settings,
         std::ofstream conversion_log(prepared.conversion_log_path);
         if (!conversion_log) throw std::runtime_error("Could not create the conversion log");
         conversion_log.close();
+        check_cancelled(cancellable);
         if (rebuild) remove_generated_code(prepared.code_directory);
         const auto generated = staging.path / "game.elf";
         auto converter = spawn_process({relinker.string(), "--to-intel", "--recursive-module-search",
             (original / "eboot.bin").string(), generated.string()}, staging.path, prepared.conversion_log_path);
         GError* conversion_error = nullptr;
-        if (!g_subprocess_wait_check(converter.get(), nullptr, &conversion_error)) {
+        if (!g_subprocess_wait_check(converter.get(), cancellable, &conversion_error)) {
             const std::string message = conversion_error ? conversion_error->message : "Conversion failed";
+            const bool cancelled = g_error_matches(conversion_error, G_IO_ERROR, G_IO_ERROR_CANCELLED);
             g_clear_error(&conversion_error);
+            if (cancelled) stop_converter(converter.get());
             throw ConversionError(message + ". Conversion log: " + prepared.conversion_log_path.string(), prepared.conversion_log_path);
         }
+        check_cancelled(cancellable);
         if (std::filesystem::is_symlink(generated)) throw std::runtime_error("Conversion produced an unexpected executable link");
         std::filesystem::permissions(generated, std::filesystem::perms::owner_exec, std::filesystem::perm_options::add);
         check_elf(generated, true);
@@ -340,13 +385,17 @@ PreparedGame prepare_game(const Game& game, const LaunchSettings& settings,
     prepared.command = {python.get(), "-B", guard.string(), "--", python.get(), "-B", script.string(),
         "--runtime", runtime.string(), "--game", original.string(),
         "--executable", executable.string(), "--workdir", prepared.working_directory.string()};
+    check_cancelled(cancellable);
     return prepared;
 }
 
-void launch_game(const PreparedGame& game, GameOutput output, GameFinished finished, const BridgeLaunch& bridge) {
+void launch_game(const PreparedGame& game, GameOutput output, GameFinished finished,
+    const BridgeLaunch& bridge, GSubprocess** managed_process) {
+    if (managed_process) *managed_process = nullptr;
     auto log = std::make_unique<GameLog>(game.log_path, std::move(output), std::move(finished));
     auto process = spawn_process(game.command, game.working_directory, {}, game.log_path.parent_path() / "memory.jsonl", bridge, game.game_id);
     auto* capture = log.release();
+    if (managed_process) *managed_process = G_SUBPROCESS(g_object_ref(process.get()));
     capture->start(process.release());
 }
 

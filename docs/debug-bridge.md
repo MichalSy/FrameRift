@@ -41,12 +41,34 @@ POST requests use `Content-Type: application/json` and `Accept: application/json
 
 | Tool | Arguments | Result |
 | --- | --- | --- |
+| `list_games` | `{}` | Visible library records with stable IDs, metadata titles, availability and current session |
+| `start_game` | `{ "game_id": "PPSA01234" }` | Starts preparation in the background and returns current session status |
+| `stop_game` | `{ "game_id": "PPSA01234" }` | Requests termination of that managed game, or cancels its pending preparation |
+| `get_game_status` | `{}` | Current/last managed session state, IDs, log paths, exit status and error |
+| `get_game_log` | `{ "lines": 5 }` | Last requested log lines; defaults to 5, maximum 200 |
 | `get_bridge_status` | `{}` | Connection, session/game IDs, UDP port, frame, capabilities and counters |
 | `get_events` | `{ "after": 0, "limit": 100 }` | Events after a local cursor; limit 1–100, immediately returns available data |
 | `send_command` | `{ "name": "set_monitoring", "args": { "enabled": true } }` | Command ID and initial `pending` status |
 | `get_command` | `{ "command_id": "<returned ID>" }` | Latest status, attempts, optional result/error |
 
 `send_command` supports names `set_monitoring`, `set_input`, `schedule_inputs`, `cancel_schedule` and `capture_frame` **only when the runtime advertises that capability**. The server transports `args` as an object; command-specific validation and execution belong to the runtime. Disconnected games, unknown names and unavailable capabilities return MCP tool errors.
+
+The five game tools use the same runtime session as the Play/Rebuild UI and work without a UDP connection. `list_games` follows configured library folders; previews and unavailable installations cannot be launched. `start_game` accepts only a listed game ID and uses existing Settings. It never accepts an arbitrary executable, directory or command. Only one game/preparation can be active.
+
+Start and stop return immediately. Poll `get_game_status` for `preparing`, `running`, `stopping` and terminal states `exited`, `stopped`, `failed` or `rebuilt`. Preparation and process failures remain visible in `error`; receipt of a start request is not proof the game started. Stop signals the existing AnyPS5 memory guard so it can terminate the managed scope and drain logs. A canceled preparation never subsequently starts the game. UI navigation does not alter the session.
+
+`get_game_log` reads the current or last managed session's game output, falling back to its conversion log when no game output is available. The result identifies its source/path, includes an array of lines and reports truncation. Reads are bounded, invalid UTF-8 is replaced, and full files remain on disk. No arbitrary file path is accepted. Immediately after app startup, before any managed session, there is no session log to read.
+
+### Codex setup
+
+Open FrameRift, then register its local HTTP endpoint:
+
+```sh
+codex mcp add framerift --url http://127.0.0.1:47653/mcp
+codex mcp get framerift
+```
+
+This stores the connection in the user Codex configuration. Reload MCP servers or begin a new Codex session to discover the tools. Keep FrameRift open for requests; no authentication token is needed for this loopback-only endpoint. A custom `FRAMERIFT_MCP_PORT` also needs a matching Codex URL. See the [official Codex MCP configuration](https://learn.chatgpt.com/docs/extend/mcp?surface=cli).
 
 Example initialization:
 
@@ -114,4 +136,4 @@ At most 64 commands can await receipt/completion, with 128 command records retai
 
 For input automation, the intended runtime contract is to upload a whole sequence before it starts: an absolute start frame such as `500`, followed by offsets such as `+20` relative to the previous **planned** action, with explicit button down/up. FrameRift currently forwards the sequence in `schedule_inputs.args`; it does not interpret those offsets or execute inputs. The exact action schema must be agreed with the AnyPS5 adapter. Screenshot commands likewise require runtime support; image transfer and a dashboard are not implemented in this slice.
 
-The native `debug_bridge` check exchanges actual UDP packets and HTTP MCP requests with a mock runtime. Real gameplay timing, overhead and end-to-end input/screenshot behavior remain to be measured after the adapter exists.
+The native `debug_bridge` check exchanges actual UDP packets and HTTP MCP requests with a mock runtime. `game_mcp` checks library queries, managed start/stop, preparation errors and log tails using temporary game/runtime fixtures. Real gameplay timing, overhead and end-to-end input/screenshot behavior remain to be measured after the adapter exists.

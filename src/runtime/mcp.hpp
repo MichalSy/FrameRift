@@ -12,11 +12,13 @@
 namespace framerift {
 
 class BridgeServer;
+class GameSession;
 
-// HTTP requests are served by the owning GLib main context.
+// HTTP requests are served by the owning GLib main context. Supplied backends
+// must outlive the server.
 class McpServer {
 public:
-    explicit McpServer(BridgeServer& bridge, std::uint16_t port = 47653);
+    explicit McpServer(BridgeServer& bridge, std::uint16_t port = 47653, GameSession* games = nullptr);
     ~McpServer();
     McpServer(const McpServer&) = delete;
     McpServer& operator=(const McpServer&) = delete;

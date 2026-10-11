@@ -18,7 +18,7 @@ FrameRift is an experimental native game library and runtime console for AnyPS5.
 - Automatic game-folder scanning, metadata titles, search, sorting and recently played games.
 - SteamGridDB artwork, an offline SQLite/image cache and animated WebP heroes; API credentials stay in the desktop keyring.
 - Linux launch and rebuild, plus a Profiler console with live output and complete session logs. Original games, saves and shared runtime libraries are preserved.
-- A local UDP debug bridge and HTTP MCP server for buffered runtime events and asynchronous commands, with a game-connection indicator. The AnyPS5 sender is a separate integration step.
+- A local UDP debug bridge and HTTP MCP server for runtime events, library listing, game start/stop, recent log lines and asynchronous bridge commands, with a game-connection indicator. The AnyPS5 sender is a separate integration step.
 
 Windows, actual gameplay compatibility and embedded game windows remain unverified. Frame timing, CPU/GPU analysis and controller navigation are planned.
 
@@ -36,6 +36,8 @@ ctest --test-dir build --output-on-failure
 In **Settings**, add game folders and configure the modified AnyPS5 checkout, compatible runtime libraries and relinker executable. Save a SteamGridDB API key there to load artwork; `STEAMGRIDDB_API_KEY` overrides the saved key. Cached artwork works offline.
 
 While FrameRift is open, MCP clients can use `http://127.0.0.1:47653/mcp` with Streamable HTTP. The Profiler displays both server addresses and the actual UDP connection state. See [Debug bridge and MCP](docs/debug-bridge.md) for configuration, tools and the runtime wire protocol.
+
+For Codex, register the running app with `codex mcp add framerift --url http://127.0.0.1:47653/mcp`. The game tools use the same guarded launcher as the UI and do not require a UDP adapter.
 
 On Linux, `cmake --install build` installs the app, desktop menu entry and icon under the configured prefix. Generated code uses the user cache; saves and session logs use the shared FrameRift data directory, keyed by game ID.
 

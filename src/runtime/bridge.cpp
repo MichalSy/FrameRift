@@ -244,6 +244,22 @@ bool loopback_peer(GSocketAddress* address) {
 
 } // namespace
 
+std::optional<double> monitoring_fps_at(const std::vector<MonitoringSample>& samples, std::size_t index) {
+    if (index >= samples.size()) return {};
+    const auto& last = samples[index];
+    if (last.timestamp_us < 1000000) return {};
+    const auto start_us = last.timestamp_us - 1000000;
+    const auto after = std::upper_bound(samples.begin(), samples.begin() + index + 1, start_us,
+        [](std::uint64_t timestamp, const MonitoringSample& sample) { return timestamp < sample.timestamp_us; });
+    if (after == samples.begin()) return {};
+    const auto& baseline = *std::prev(after);
+    const auto count = static_cast<std::uint64_t>(samples.begin() + index + 1 - after);
+    if (baseline.monitoring_epoch != last.monitoring_epoch || baseline.output_handle != last.output_handle ||
+        baseline.output_generation != last.output_generation || last.completed_flip_count < baseline.completed_flip_count ||
+        last.completed_flip_count - baseline.completed_flip_count != count) return {};
+    return static_cast<double>(count);
+}
+
 struct BridgeServer::Impl {
     struct Event { std::uint64_t id; std::string json; };
     struct Command {

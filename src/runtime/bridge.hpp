@@ -40,6 +40,9 @@ struct MonitoringSample {
     std::uint64_t missing_before = 0;
 };
 
+// Completed flips in the preceding source second; unavailable without a reliable baseline.
+std::optional<double> monitoring_fps_at(const std::vector<MonitoringSample>& samples, std::size_t index);
+
 struct MonitoringStats {
     std::size_t sample_count = 0;
     std::uint64_t observed_samples = 0;

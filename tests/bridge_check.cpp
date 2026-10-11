@@ -635,6 +635,32 @@ void check_resources() {
 
 int main() {
     try {
+        std::vector<framerift::MonitoringSample> frames;
+        for (std::uint64_t i = 0; i <= 60; ++i) {
+            framerift::MonitoringSample frame;
+            frame.timestamp_us = 2000000 + i * 1000000 / 60;
+            frame.completed_flip_count = i;
+            frame.monitoring_epoch = 1;
+            frames.push_back(frame);
+        }
+        require(!framerift::monitoring_fps_at(frames, 59), "FPS needs a full source second");
+        require(framerift::monitoring_fps_at(frames, 60) == 60, "Steady completed flips should report 60 FPS");
+        auto short_flip = frames.back();
+        short_flip.timestamp_us += 2500;
+        short_flip.completed_flip_count++;
+        short_flip.flip_interval_us = 2500;
+        frames.push_back(short_flip);
+        require(framerift::monitoring_fps_at(frames, 61) == 61, "A 2.5 ms flip must not report 400 FPS");
+        auto resumed = frames.back();
+        resumed.timestamp_us += 5000000;
+        resumed.completed_flip_count++;
+        frames.push_back(resumed);
+        require(framerift::monitoring_fps_at(frames, 62) == 1, "Resume after a stall must count only the new completion");
+        frames.back().completed_flip_count += 2;
+        require(!framerift::monitoring_fps_at(frames, 62), "Loss must not fabricate FPS");
+        frames.back().completed_flip_count -= 2;
+        frames.back().monitoring_epoch++;
+        require(!framerift::monitoring_fps_at(frames, 62), "FPS must not cross monitoring epochs");
         framerift::BridgeServer bridge(0);
         require(bridge.port() != 0 && !bridge.status().connected, "UDP bridge did not start disconnected on an assigned port");
         bridge.expect_session("bridge-check-session", "PPSA01234");

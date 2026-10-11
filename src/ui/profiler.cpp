@@ -45,7 +45,7 @@ std::string bytes(long double value) {
     const char* units[] = {"B", "KiB", "MiB", "GiB", "TiB", "PiB", "EiB"};
     unsigned unit = 0;
     while (value >= 1024 && unit < 6) { value /= 1024; ++unit; }
-    return number(static_cast<double>(value), unit ? 1 : 0) + " " + units[unit];
+    return number(static_cast<double>(value), unit ? 2 : 0) + " " + units[unit];
 }
 
 GtkWidget* panel() {
@@ -66,202 +66,173 @@ constexpr double chart_right = 22;
 constexpr double chart_top = 24;
 constexpr double chart_bottom = 40;
 
-double chart_maximum(const MonitoringSnapshot& snapshot) {
+std::optional<double> chart_value(const MonitoringSnapshot& snapshot, std::size_t index, bool fps) {
+    if (fps) return monitoring_fps_at(snapshot.samples, index);
+    const auto& sample = snapshot.samples[index];
+    if (!sample.flip_interval_us) return {};
+    return *sample.flip_interval_us / 1000.0;
+}
+
+std::uint64_t chart_end(const MonitoringSnapshot& snapshot) {
+    if (snapshot.samples.empty()) return 0;
+    // Advance the live axis during a stall rather than pinning an old completion to "now".
+    const auto age = snapshot.connected && snapshot.enabled && snapshot.age_ms ? *snapshot.age_ms : 0.0;
+    return snapshot.samples.back().timestamp_us + static_cast<std::uint64_t>(age * 1000.0);
+}
+
+double chart_maximum(const MonitoringSnapshot& snapshot, bool fps) {
     double maximum = 0;
-    for (const auto& sample : snapshot.samples)
-        if (sample.flip_interval_us) maximum = std::max(maximum, *sample.flip_interval_us / 1000.0);
-    return std::max(25.0, std::ceil(maximum / 10.0) * 10.0);
+    const auto end = chart_end(snapshot);
+    for (std::size_t i = 0; i < snapshot.samples.size(); ++i) {
+        if (end - snapshot.samples[i].timestamp_us > 60000000) continue;
+        if (const auto value = chart_value(snapshot, i, fps)) maximum = std::max(maximum, *value);
+    }
+    return fps ? std::max(90.0, std::ceil(maximum / 30.0) * 30.0) : std::max(25.0, std::ceil(maximum / 10.0) * 10.0);
 }
 
 } // namespace
 
 ProfilerView::ProfilerView(std::function<void(bool)> request_monitoring)
     : request_monitoring_(std::move(request_monitoring)) {
-    root_ = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
+    root_ = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
     g_object_ref_sink(root_);
     gtk_widget_add_css_class(root_, "profiler-page");
-    auto* header = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 20);
+    auto* workspace = gtk_stack_new();
+    gtk_stack_set_hhomogeneous(GTK_STACK(workspace), false);
+    gtk_stack_set_vhomogeneous(GTK_STACK(workspace), false);
+    gtk_widget_set_vexpand(workspace, true);
+    auto* header = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 18);
+    gtk_widget_add_css_class(header, "profiler-session");
     title_ = label("Profiler", "profiler-title");
     gtk_label_set_ellipsize(GTK_LABEL(title_), PANGO_ELLIPSIZE_END);
     gtk_widget_set_hexpand(title_, true);
     gtk_box_append(GTK_BOX(header), title_);
     status_ = label("No session", "profiler-status");
-    gtk_widget_set_valign(status_, GTK_ALIGN_CENTER);
     gtk_box_append(GTK_BOX(header), status_);
-    gtk_box_append(GTK_BOX(root_), header);
-
-    auto* connection = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 16);
-    gtk_widget_add_css_class(connection, "monitor-session-strip");
-    bridge_connection_ = label("Waiting for game connection", "bridge-connection");
-    gtk_box_append(GTK_BOX(connection), bridge_connection_);
-    auto* spacer = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
-    gtk_widget_set_hexpand(spacer, true);
-    gtk_box_append(GTK_BOX(connection), spacer);
-    monitoring_state_ = label("Monitoring unavailable", "monitoring-state");
-    gtk_label_set_ellipsize(GTK_LABEL(monitoring_state_), PANGO_ELLIPSIZE_END);
-    gtk_box_append(GTK_BOX(connection), monitoring_state_);
-    gtk_box_append(GTK_BOX(connection), label("Monitoring", "monitor-control-label"));
-    monitoring_switch_ = gtk_switch_new();
-    gtk_widget_set_valign(monitoring_switch_, GTK_ALIGN_CENTER);
-    gtk_widget_set_sensitive(monitoring_switch_, false);
-    g_signal_connect(monitoring_switch_, "state-set", G_CALLBACK(+[](GtkSwitch*, gboolean enabled, gpointer data) -> gboolean {
+    bridge_connection_ = label("Disconnected", "bridge-connection");
+    gtk_box_append(GTK_BOX(header), bridge_connection_);
+    auto* tabs = gtk_stack_switcher_new();
+    gtk_stack_switcher_set_stack(GTK_STACK_SWITCHER(tabs), GTK_STACK(workspace));
+    gtk_widget_add_css_class(tabs, "profiler-tabs");
+    gtk_box_append(GTK_BOX(header), tabs);
+    monitoring_toggle_ = gtk_check_button_new_with_label("Monitoring");
+    gtk_widget_set_sensitive(monitoring_toggle_, false);
+    g_signal_connect(monitoring_toggle_, "toggled", G_CALLBACK(+[](GtkCheckButton* button, gpointer data) {
         auto& self = *static_cast<ProfilerView*>(data);
-        if (self.updating_switch_) return false;
-        auto restore = [&]() noexcept {
-            self.updating_switch_ = true;
-            gtk_switch_set_active(GTK_SWITCH(self.monitoring_switch_), self.monitoring_.enabled);
-            gtk_switch_set_state(GTK_SWITCH(self.monitoring_switch_), self.monitoring_.enabled);
-            self.updating_switch_ = false;
-            gtk_widget_set_sensitive(self.monitoring_switch_, self.monitoring_.connected && self.monitoring_.supported &&
-                !self.monitoring_.pending && static_cast<bool>(self.request_monitoring_));
-            gtk_label_set_text(GTK_LABEL(self.monitoring_state_), "Monitoring request failed");
-        };
+        if (self.updating_monitoring_) return;
         try {
-            gtk_widget_set_sensitive(self.monitoring_switch_, false);
-            gtk_label_set_text(GTK_LABEL(self.monitoring_state_), enabled ? "Starting monitoring…" : "Stopping monitoring…");
-            if (self.request_monitoring_) self.request_monitoring_(enabled);
+            gtk_widget_set_sensitive(self.monitoring_toggle_, false);
+            if (self.request_monitoring_) self.request_monitoring_(gtk_check_button_get_active(button));
         } catch (const std::exception& error) {
             show_error(self.root_, error.what());
-            restore();
+            self.monitoring(self.monitoring_);
         } catch (...) {
             show_error(self.root_, "Could not change monitoring");
-            restore();
+            self.monitoring(self.monitoring_);
         }
-        return true;
     }), this);
-    gtk_box_append(GTK_BOX(connection), monitoring_switch_);
-    gtk_box_append(GTK_BOX(root_), connection);
-
-    auto* bridge = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
+    gtk_box_append(GTK_BOX(header), monitoring_toggle_);
+    gtk_box_append(GTK_BOX(header), label("Update 1 s", "monitor-control-label"));
+    auto* bridge = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
     bridge_activity_ = label("", "bridge-endpoint");
     gtk_label_set_wrap(GTK_LABEL(bridge_activity_), true);
     gtk_box_append(GTK_BOX(bridge), bridge_activity_);
     bridge_endpoint_ = label("", "bridge-endpoint");
     mcp_endpoint_ = label("", "bridge-endpoint");
-    for (auto* endpoint : {bridge_endpoint_, mcp_endpoint_}) {
+    monitoring_state_ = label("Monitoring unavailable", "monitoring-state");
+    for (auto* endpoint : {bridge_endpoint_, mcp_endpoint_, monitoring_state_}) {
         gtk_label_set_selectable(GTK_LABEL(endpoint), true);
         gtk_box_append(GTK_BOX(bridge), endpoint);
     }
-    auto* bridge_details = gtk_expander_new("Connection details");
-    gtk_widget_add_css_class(bridge_details, "monitor-connection-details");
-    gtk_expander_set_child(GTK_EXPANDER(bridge_details), bridge);
-    gtk_box_append(GTK_BOX(root_), bridge_details);
-
-    auto* workspace = gtk_stack_new();
-    gtk_stack_set_hhomogeneous(GTK_STACK(workspace), false);
-    gtk_stack_set_vhomogeneous(GTK_STACK(workspace), false);
-    gtk_widget_set_vexpand(workspace, true);
-    auto* tabs = gtk_stack_switcher_new();
-    gtk_stack_switcher_set_stack(GTK_STACK_SWITCHER(tabs), GTK_STACK(workspace));
-    gtk_widget_set_halign(tabs, GTK_ALIGN_START);
-    gtk_widget_add_css_class(tabs, "profiler-tabs");
-    gtk_box_append(GTK_BOX(root_), tabs);
+    auto* popover = gtk_popover_new();
+    gtk_popover_set_child(GTK_POPOVER(popover), bridge);
+    auto* details = gtk_menu_button_new();
+    gtk_menu_button_set_icon_name(GTK_MENU_BUTTON(details), "dialog-information-symbolic");
+    gtk_menu_button_set_popover(GTK_MENU_BUTTON(details), popover);
+    gtk_widget_set_tooltip_text(details, "Connection and monitoring details");
+    gtk_box_append(GTK_BOX(header), details);
+    gtk_box_append(GTK_BOX(root_), header);
     gtk_box_append(GTK_BOX(root_), workspace);
 
     auto* live_scroll = gtk_scrolled_window_new();
     gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(live_scroll), GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
-    auto* live = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
+    auto* live = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
     gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(live_scroll), live);
     gtk_stack_add_titled(GTK_STACK(workspace), live_scroll, "live", "Live");
-    auto* overview = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
-    window_state_ = label("Last 1 s", "monitor-window");
-    gtk_widget_set_tooltip_text(window_state_, "One second ending at the latest received game monotonic timestamp; freshness is shown separately");
-    gtk_widget_set_hexpand(window_state_, true);
-    gtk_box_append(GTK_BOX(overview), window_state_);
-    freshness_ = label("No frame data", "monitor-freshness");
-    gtk_label_set_wrap(GTK_LABEL(freshness_), true);
-    gtk_box_append(GTK_BOX(overview), freshness_);
-    gtk_box_append(GTK_BOX(live), overview);
-
-    auto* cards = gtk_flow_box_new();
-    gtk_flow_box_set_selection_mode(GTK_FLOW_BOX(cards), GTK_SELECTION_NONE);
-    gtk_flow_box_set_homogeneous(GTK_FLOW_BOX(cards), true);
-    gtk_flow_box_set_min_children_per_line(GTK_FLOW_BOX(cards), 2);
-    gtk_flow_box_set_max_children_per_line(GTK_FLOW_BOX(cards), 4);
-    gtk_flow_box_set_column_spacing(GTK_FLOW_BOX(cards), 12);
-    gtk_flow_box_set_row_spacing(GTK_FLOW_BOX(cards), 12);
-    gtk_widget_add_css_class(cards, "metric-cards");
-    const char* card_titles[] = {"FPS (estimated)", "Mean flip interval", "P95 flip interval", "Worst flip interval"};
+    auto* cards = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+    gtk_widget_add_css_class(cards, "metric-strip");
+    auto* metric_values = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+    gtk_box_set_homogeneous(GTK_BOX(metric_values), true);
+    gtk_widget_set_hexpand(metric_values, true);
+    const char* card_titles[] = {"FPS (estimated)", "Mean flip interval", "P95", "Worst"};
     for (std::size_t i = 0; i < metrics_.size(); ++i) {
-        auto* card = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
+        auto* card = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
         gtk_widget_add_css_class(card, "metric-card");
-        gtk_widget_set_size_request(card, 190, -1);
+        gtk_widget_set_hexpand(card, true);
         gtk_box_append(GTK_BOX(card), label(card_titles[i], "metric-label"));
-        metrics_[i] = label("Unavailable", "metric-value");
-        if (!i) {
-            gtk_widget_add_css_class(metrics_[i], "metric-primary");
-            gtk_widget_set_tooltip_text(metrics_[i], "Completed runtime flips, not confirmed monitor scanout");
-        }
+        metrics_[i] = label("–", "metric-value");
+        gtk_label_set_xalign(GTK_LABEL(metrics_[i]), 1);
+        gtk_label_set_ellipsize(GTK_LABEL(metrics_[i]), PANGO_ELLIPSIZE_END);
+        if (!i) gtk_widget_add_css_class(metrics_[i], "metric-primary");
         gtk_box_append(GTK_BOX(card), metrics_[i]);
-        gtk_box_append(GTK_BOX(card), label("Last 1 s", "metric-scope"));
-        gtk_flow_box_insert(GTK_FLOW_BOX(cards), card, -1);
+        gtk_box_append(GTK_BOX(metric_values), card);
     }
+    gtk_box_append(GTK_BOX(cards), metric_values);
+    auto* summary = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
+    gtk_widget_add_css_class(summary, "metric-card");
+    window_state_ = label("Last 1 s", "monitor-window");
+    gtk_label_set_width_chars(GTK_LABEL(window_state_), 20);
+    gtk_label_set_max_width_chars(GTK_LABEL(window_state_), 20);
+    gtk_label_set_ellipsize(GTK_LABEL(window_state_), PANGO_ELLIPSIZE_END);
+    coverage_ = label("– / – samples · –", "monitor-coverage");
+    gtk_label_set_width_chars(GTK_LABEL(coverage_), 20);
+    gtk_label_set_max_width_chars(GTK_LABEL(coverage_), 20);
+    gtk_label_set_ellipsize(GTK_LABEL(coverage_), PANGO_ELLIPSIZE_END);
+    gtk_box_append(GTK_BOX(summary), window_state_);
+    gtk_box_append(GTK_BOX(summary), coverage_);
+    gtk_box_append(GTK_BOX(cards), summary);
     gtk_box_append(GTK_BOX(live), cards);
-    coverage_ = label("Sample coverage unavailable", "monitor-coverage");
-    gtk_label_set_wrap(GTK_LABEL(coverage_), true);
-    gtk_box_append(GTK_BOX(live), coverage_);
-
-    auto* detail = panel();
-    auto* detail_header = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 14);
-    auto* detail_title = label("Frame detail", "monitor-heading");
-    gtk_widget_set_hexpand(detail_title, true);
-    gtk_box_append(GTK_BOX(detail_header), detail_title);
-    const char* selections[] = {"Latest received frame", "Worst in last 1 s", nullptr};
-    frame_selector_ = gtk_drop_down_new_from_strings(selections);
-    gtk_widget_add_css_class(frame_selector_, "frame-picker");
-    g_signal_connect(frame_selector_, "notify::selected", G_CALLBACK(+[](GObject*, GParamSpec*, gpointer data) {
-        auto& self = *static_cast<ProfilerView*>(data);
-        try { self.inspected_.reset(); self.update_frame_detail(); gtk_widget_queue_draw(self.chart_); }
-        catch (const std::exception& error) { show_error(self.root_, error.what()); }
-        catch (...) { show_error(self.root_, "Could not select a frame"); }
-    }), this);
-    gtk_box_append(GTK_BOX(detail_header), frame_selector_);
-    follow_live_ = gtk_button_new_with_label("Follow live");
-    gtk_widget_add_css_class(follow_live_, "toolbar-action");
-    gtk_widget_set_sensitive(follow_live_, false);
-    g_signal_connect(follow_live_, "clicked", G_CALLBACK(+[](GtkButton*, gpointer data) {
-        auto& self = *static_cast<ProfilerView*>(data);
-        try { self.inspected_.reset(); self.update_frame_detail(); gtk_widget_queue_draw(self.chart_); }
-        catch (const std::exception& error) { show_error(self.root_, error.what()); }
-        catch (...) { show_error(self.root_, "Could not follow live frames"); }
-    }), this);
-    gtk_box_append(GTK_BOX(detail_header), follow_live_);
-    gtk_box_append(GTK_BOX(detail), detail_header);
-    auto* fields = gtk_flow_box_new();
-    gtk_flow_box_set_selection_mode(GTK_FLOW_BOX(fields), GTK_SELECTION_NONE);
-    gtk_flow_box_set_homogeneous(GTK_FLOW_BOX(fields), true);
-    gtk_flow_box_set_min_children_per_line(GTK_FLOW_BOX(fields), 1);
-    gtk_flow_box_set_max_children_per_line(GTK_FLOW_BOX(fields), 3);
-    gtk_flow_box_set_column_spacing(GTK_FLOW_BOX(fields), 20);
-    gtk_flow_box_set_row_spacing(GTK_FLOW_BOX(fields), 12);
-    gtk_widget_add_css_class(fields, "frame-fields");
-    const char* field_titles[] = {"Frame", "Output stream", "Flip interval"};
-    GtkWidget** values[] = {&frame_identity_, &frame_stream_, &frame_interval_};
-    for (unsigned i = 0; i < 3; ++i) {
-        auto* field = gtk_box_new(GTK_ORIENTATION_VERTICAL, 7);
-        gtk_widget_set_size_request(field, 180, -1);
-        gtk_box_append(GTK_BOX(field), label(field_titles[i], "metric-label"));
-        *values[i] = label("Unavailable", "frame-value");
-        gtk_box_append(GTK_BOX(field), *values[i]);
-        gtk_flow_box_insert(GTK_FLOW_BOX(fields), field, -1);
-    }
-    gtk_box_append(GTK_BOX(detail), fields);
-    frame_scope_ = label("No frame selected", "monitor-frame-scope");
-    gtk_label_set_wrap(GTK_LABEL(frame_scope_), true);
-    gtk_box_append(GTK_BOX(detail), frame_scope_);
-    gtk_box_append(GTK_BOX(live), detail);
 
     auto* chart_panel = panel();
-    auto* chart_header = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 14);
-    auto* chart_title = label("Flip intervals · last 60 s", "monitor-heading");
+    gtk_widget_add_css_class(chart_panel, "pacing-panel");
+    auto* chart_header = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
+    auto* chart_title = label("Frame pacing", "monitor-heading");
     gtk_widget_set_hexpand(chart_title, true);
     gtk_box_append(GTK_BOX(chart_header), chart_title);
-    gtk_box_append(GTK_BOX(chart_header), label("Click a sample to inspect", "monitor-chart-hint"));
+    auto* modes = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+    gtk_widget_add_css_class(modes, "linked");
+    chart_fps_button_ = gtk_toggle_button_new_with_label("FPS");
+    auto* fps = chart_fps_button_;
+    auto* intervals = gtk_toggle_button_new_with_label("Flip interval");
+    gtk_toggle_button_set_group(GTK_TOGGLE_BUTTON(intervals), GTK_TOGGLE_BUTTON(fps));
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(fps), true);
+    g_signal_connect(fps, "toggled", G_CALLBACK(+[](GtkToggleButton* button, gpointer data) {
+        auto& self = *static_cast<ProfilerView*>(data);
+        self.chart_fps_ = gtk_toggle_button_get_active(button);
+        gtk_widget_queue_draw(self.chart_);
+    }), this);
+    gtk_box_append(GTK_BOX(modes), fps);
+    gtk_box_append(GTK_BOX(modes), intervals);
+    gtk_box_append(GTK_BOX(chart_header), modes);
+    follow_live_ = gtk_check_button_new_with_label("Follow live");
+    gtk_check_button_set_active(GTK_CHECK_BUTTON(follow_live_), true);
+    g_signal_connect(follow_live_, "toggled", G_CALLBACK(+[](GtkCheckButton* button, gpointer data) {
+        auto& self = *static_cast<ProfilerView*>(data);
+        if (self.updating_follow_) return;
+        try {
+            if (gtk_check_button_get_active(button)) self.inspected_.reset();
+            else if (!self.monitoring_.samples.empty()) self.inspected_ = self.monitoring_.samples.back();
+            self.update_frame_detail();
+            gtk_widget_queue_draw(self.chart_);
+        } catch (const std::exception& error) { show_error(self.root_, error.what()); }
+        catch (...) { show_error(self.root_, "Could not follow live frames"); }
+    }), this);
+    gtk_box_append(GTK_BOX(chart_header), follow_live_);
     gtk_box_append(GTK_BOX(chart_panel), chart_header);
     chart_ = gtk_drawing_area_new();
-    gtk_drawing_area_set_content_height(GTK_DRAWING_AREA(chart_), 180);
+    gtk_drawing_area_set_content_height(GTK_DRAWING_AREA(chart_), 140);
     gtk_widget_set_hexpand(chart_, true);
-    gtk_widget_set_tooltip_text(chart_, "Intervals between completed runtime flips; gaps indicate incomplete data.");
+    gtk_widget_set_tooltip_text(chart_, "FPS counts completed flips in the preceding source second. Click a sample to inspect. Missing samples are not interpolated.");
     gtk_drawing_area_set_draw_func(GTK_DRAWING_AREA(chart_), +[](GtkDrawingArea*, cairo_t* context, int width, int height, gpointer data) {
         static_cast<ProfilerView*>(data)->draw_chart(context, width, height);
     }, this, nullptr);
@@ -274,98 +245,183 @@ ProfilerView::ProfilerView(std::function<void(bool)> request_monitoring)
     }), this);
     gtk_widget_add_controller(chart_, GTK_EVENT_CONTROLLER(chart_click_));
     gtk_box_append(GTK_BOX(chart_panel), chart_);
-    gtk_box_append(GTK_BOX(chart_panel), label("Runtime flip completion · game monotonic clock · gaps are not interpolated", "monitor-chart-hint"));
-    auto* resource_row = gtk_flow_box_new();
-    gtk_flow_box_set_selection_mode(GTK_FLOW_BOX(resource_row), GTK_SELECTION_NONE);
-    gtk_flow_box_set_homogeneous(GTK_FLOW_BOX(resource_row), false);
-    gtk_flow_box_set_min_children_per_line(GTK_FLOW_BOX(resource_row), 1);
-    gtk_flow_box_set_max_children_per_line(GTK_FLOW_BOX(resource_row), 2);
-    gtk_flow_box_set_column_spacing(GTK_FLOW_BOX(resource_row), 12);
-    gtk_flow_box_set_row_spacing(GTK_FLOW_BOX(resource_row), 12);
-    gtk_widget_add_css_class(resource_row, "resource-row");
-    gtk_widget_set_size_request(chart_panel, 600, -1);
-    gtk_widget_set_hexpand(chart_panel, true);
-    gtk_flow_box_insert(GTK_FLOW_BOX(resource_row), chart_panel, -1);
+    auto* detail = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 16);
+    gtk_widget_add_css_class(detail, "frame-inspection");
+    frame_identity_ = label("Frame –", "frame-value");
+    frame_interval_ = label("Flip interval –", "frame-value");
+    frame_stream_ = label("Output – / generation –", "frame-value");
+    for (auto* field : {frame_identity_, frame_interval_, frame_stream_}) {
+        gtk_box_append(GTK_BOX(detail), field);
+        gtk_box_append(GTK_BOX(detail), gtk_separator_new(GTK_ORIENTATION_VERTICAL));
+    }
+    auto* detail_spacer = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+    gtk_widget_set_hexpand(detail_spacer, true);
+    gtk_box_append(GTK_BOX(detail), detail_spacer);
+    const char* selections[] = {"Latest received frame", "Worst in last 1 s", nullptr};
+    frame_selector_ = gtk_drop_down_new_from_strings(selections);
+    g_signal_connect(frame_selector_, "notify::selected", G_CALLBACK(+[](GObject*, GParamSpec*, gpointer data) {
+        auto& self = *static_cast<ProfilerView*>(data);
+        try { self.inspected_.reset(); self.update_frame_detail(); gtk_widget_queue_draw(self.chart_); }
+        catch (const std::exception& error) { show_error(self.root_, error.what()); }
+        catch (...) { show_error(self.root_, "Could not select a frame"); }
+    }), this);
+    gtk_box_append(GTK_BOX(detail), frame_selector_);
+    gtk_box_append(GTK_BOX(chart_panel), detail);
+    gtk_box_append(GTK_BOX(live), chart_panel);
 
-    resource_panel_ = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
-    gtk_widget_add_css_class(resource_panel_, "monitor-panel");
+    auto* lower = gtk_flow_box_new();
+    gtk_flow_box_set_selection_mode(GTK_FLOW_BOX(lower), GTK_SELECTION_NONE);
+    gtk_flow_box_set_min_children_per_line(GTK_FLOW_BOX(lower), 1);
+    gtk_flow_box_set_max_children_per_line(GTK_FLOW_BOX(lower), 2);
+    gtk_flow_box_set_column_spacing(GTK_FLOW_BOX(lower), 12);
+    gtk_flow_box_set_row_spacing(GTK_FLOW_BOX(lower), 12);
+    gtk_widget_add_css_class(lower, "resource-row");
+    gtk_widget_set_vexpand(lower, true);
+    auto* consumers = panel();
+    gtk_widget_add_css_class(consumers, "consumers-panel");
+    gtk_widget_set_size_request(consumers, 850, -1);
+    gtk_widget_set_hexpand(consumers, true);
+    auto* consumer_header = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
+    gtk_box_append(GTK_BOX(consumer_header), label("Top frame consumers", "monitor-heading"));
+    consumer_frame_ = label("Frame –", "consumer-frame");
+    gtk_box_append(GTK_BOX(consumer_header), consumer_frame_);
+    auto* cpu = gtk_toggle_button_new_with_label("Driver CPU");
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(cpu), true);
+    gtk_widget_set_sensitive(cpu, false);
+    auto* gpu = gtk_toggle_button_new_with_label("GPU");
+    gtk_widget_set_sensitive(gpu, false);
+    gtk_box_append(GTK_BOX(consumer_header), cpu);
+    gtk_box_append(GTK_BOX(consumer_header), gpu);
+    auto* pending = label("Measurements pending", "consumer-pending");
+    gtk_widget_set_hexpand(pending, true);
+    gtk_label_set_xalign(GTK_LABEL(pending), 1);
+    gtk_widget_set_tooltip_text(pending, "Per-frame phase attribution is not supplied by this runtime. Placeholder rows do not represent measured rankings.");
+    gtk_box_append(GTK_BOX(consumer_header), pending);
+    gtk_box_append(GTK_BOX(consumers), consumer_header);
+    auto* table = gtk_grid_new();
+    gtk_grid_set_column_spacing(GTK_GRID(table), 18);
+    gtk_grid_set_row_spacing(GTK_GRID(table), 0);
+    const char* headings[] = {"Phase", "", "Elapsed", "Calls", "Share of flip"};
+    for (unsigned col = 0; col < 5; ++col) {
+        auto* heading = label(headings[col], "consumer-cell");
+        gtk_widget_add_css_class(heading, "consumer-column");
+        if (col > 1) gtk_label_set_xalign(GTK_LABEL(heading), 1);
+        gtk_grid_attach(GTK_GRID(table), heading, col, 0, 1, 1);
+    }
+    const char* phases[] = {"Packet decode", "Texture upload", "Pipeline preparation", "Descriptor update", "Command recording",
+        "Buffer synchronization", "Render-target setup", "Shader specialization", "Draw submission", "Present preparation"};
+    for (unsigned row = 0; row < 10; ++row) {
+        auto* phase = label(phases[row], "consumer-cell");
+        gtk_widget_set_size_request(phase, 205, -1);
+        gtk_grid_attach(GTK_GRID(table), phase, 0, row + 1, 1, 1);
+        auto* bar = gtk_progress_bar_new();
+        gtk_widget_add_css_class(bar, "consumer-bar");
+        gtk_widget_set_hexpand(bar, true);
+        gtk_widget_set_size_request(bar, 140, -1);
+        gtk_widget_set_valign(bar, GTK_ALIGN_CENTER);
+        gtk_grid_attach(GTK_GRID(table), bar, 1, row + 1, 1, 1);
+        for (unsigned col = 2; col < 5; ++col) {
+            auto* value = label("–", "consumer-cell");
+            gtk_widget_add_css_class(value, "numeric");
+            gtk_label_set_xalign(GTK_LABEL(value), 1);
+            gtk_widget_set_size_request(value, col == 2 ? 90 : col == 3 ? 75 : 110, -1);
+            gtk_grid_attach(GTK_GRID(table), value, col, row + 1, 1, 1);
+        }
+    }
+    gtk_box_append(GTK_BOX(consumers), table);
+    gtk_flow_box_insert(GTK_FLOW_BOX(lower), consumers, -1);
+
+    auto* side = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
+    gtk_widget_set_size_request(side, 430, -1);
+    gtk_widget_set_hexpand(side, true);
+    resource_panel_ = panel();
     gtk_widget_add_css_class(resource_panel_, "resource-panel");
-    gtk_widget_set_size_request(resource_panel_, 360, -1);
-    gtk_widget_set_hexpand(resource_panel_, true);
     auto* resource_header = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
-    auto* resource_title = label("Shader & memory", "monitor-heading");
+    auto* resource_title = label("Shader activity", "monitor-heading");
     gtk_widget_set_hexpand(resource_title, true);
     gtk_box_append(GTK_BOX(resource_header), resource_title);
-    resource_state_ = label("Unavailable", "resource-state");
+    resource_state_ = label("–", "resource-state");
     gtk_box_append(GTK_BOX(resource_header), resource_state_);
     gtk_box_append(GTK_BOX(resource_panel_), resource_header);
-
-    auto* resource_grid = gtk_grid_new();
-    gtk_grid_set_column_spacing(GTK_GRID(resource_grid), 12);
-    gtk_grid_set_row_spacing(GTK_GRID(resource_grid), 3);
-    const char* shader_labels[] = {"Preparing jobs", "Translation ops", "Cached variants", "Disk cache"};
-    const char* shader_tips[] = {
-        "Shader registration preparation jobs queued and currently active.",
-        "Active and completed translation operations: guest code to IR and variant SPIR-V emission. These are not distinct shader counts. Completed counts cover the process lifetime.",
-        "Compiled variants retained by the source cache. CPU payload counts copied guest-code and SPIR-V words; excludes IR, metadata, temporary allocations and native driver memory.",
-        "Disk shader-cache hits and misses over the process lifetime. Writes and failures are available in the tooltip."
-    };
-    for (unsigned i = 0; i < shader_values_.size(); ++i) {
-        auto* heading = label(shader_labels[i], "resource-label");
-        gtk_widget_set_tooltip_text(heading, shader_tips[i]);
-        gtk_grid_attach(GTK_GRID(resource_grid), heading, 0, i, 1, 1);
-        shader_values_[i] = label("Unavailable", "resource-value");
+    auto* work_table = gtk_grid_new();
+    gtk_grid_set_column_spacing(GTK_GRID(work_table), 14);
+    const char* work_headers[] = {"Work", "Active", "Done", "Elapsed / window"};
+    for (unsigned col = 0; col < 4; ++col) {
+        auto* heading = label(work_headers[col], "work-cell");
+        gtk_widget_add_css_class(heading, "consumer-column");
+        if (col) gtk_label_set_xalign(GTK_LABEL(heading), 1);
+        gtk_grid_attach(GTK_GRID(work_table), heading, col, 0, 1, 1);
+    }
+    const char* work_labels[] = {"Translation", "Specialization", "Pipeline build", "Shader modules"};
+    for (unsigned row = 0; row < 4; ++row) {
+        auto* heading = label(work_labels[row], "work-cell");
+        gtk_widget_set_hexpand(heading, true);
+        gtk_grid_attach(GTK_GRID(work_table), heading, 0, row + 1, 1, 1);
+        for (unsigned col = 0; col < 3; ++col) {
+            auto* value = label("–", "work-cell");
+            gtk_widget_add_css_class(value, "numeric");
+            gtk_label_set_xalign(GTK_LABEL(value), 1);
+            gtk_widget_set_size_request(value, col == 2 ? 100 : 45, -1);
+            activity_values_[row][col] = value;
+            gtk_grid_attach(GTK_GRID(work_table), value, col + 1, row + 1, 1, 1);
+        }
+    }
+    gtk_box_append(GTK_BOX(resource_panel_), work_table);
+    queues_ = label("Preparation – queued · Optimization – queued", "resource-scope");
+    gtk_box_append(GTK_BOX(resource_panel_), queues_);
+    auto* cache = gtk_grid_new();
+    gtk_grid_set_column_spacing(GTK_GRID(cache), 12);
+    const char* cache_labels[] = {"Cached variants", "CPU payload", "Disk cache"};
+    for (unsigned i = 0; i < 3; ++i) {
+        auto* heading = label(cache_labels[i], "resource-label");
+        gtk_widget_set_hexpand(heading, true);
+        gtk_grid_attach(GTK_GRID(cache), heading, 0, i, 1, 1);
+        shader_values_[i] = label("–", "resource-value");
         gtk_label_set_xalign(GTK_LABEL(shader_values_[i]), 1);
-        gtk_label_set_ellipsize(GTK_LABEL(shader_values_[i]), PANGO_ELLIPSIZE_END);
-        gtk_widget_set_hexpand(shader_values_[i], true);
-        gtk_grid_attach(GTK_GRID(resource_grid), shader_values_[i], 1, i, 1, 1);
+        gtk_grid_attach(GTK_GRID(cache), shader_values_[i], 1, i, 1, 1);
     }
-    const char* work_labels[] = {"Specialization", "Pipeline build", "Pipeline optimization", "Shader modules",
-        "Present / fence", "Acquire / fence", "Device / queue idle", "Graphics fence", "Queue submission"};
-    for (unsigned i = 0; i < work_values_.size(); ++i) {
-        auto* heading = label(work_labels[i], "resource-label");
-        gtk_grid_attach(GTK_GRID(resource_grid), heading, 0, i + 4, 1, 1);
-        work_values_[i] = label("Unavailable", "resource-value");
-        gtk_label_set_xalign(GTK_LABEL(work_values_[i]), 1);
-        gtk_label_set_ellipsize(GTK_LABEL(work_values_[i]), PANGO_ELLIPSIZE_END);
-        gtk_widget_set_hexpand(work_values_[i], true);
-        gtk_grid_attach(GTK_GRID(resource_grid), work_values_[i], 1, i + 4, 1, 1);
-    }
-    const char* memory_labels[] = {"Process RSS", "Sampled cache", "Storage cache", "GPU heap"};
-    const char* memory_tips[] = {
-        "Resident memory of the game process; separate from shader payload and GPU memory.",
-        "Sampled-image cache accounting and its configured budget; not total physical GPU memory.",
-        "Storage-image cache accounting and its configured budget; not total physical GPU memory.",
-        "Driver estimate for the largest device-local heap and its budget. The source poll age is shown separately from resource receipt age."
-    };
-    for (unsigned i = 0; i < memory_values_.size(); ++i) {
+    gtk_box_append(GTK_BOX(resource_panel_), cache);
+    resource_scope_ = resource_title;
+    gtk_box_append(GTK_BOX(side), resource_panel_);
+    memory_panel_ = panel();
+    gtk_widget_add_css_class(memory_panel_, "resource-panel");
+    gtk_widget_set_vexpand(memory_panel_, true);
+    gtk_box_append(GTK_BOX(memory_panel_), label("Memory", "monitor-heading"));
+    auto* memory_grid = gtk_grid_new();
+    gtk_grid_set_column_spacing(GTK_GRID(memory_grid), 14);
+    gtk_grid_set_row_spacing(GTK_GRID(memory_grid), 6);
+    const char* memory_labels[] = {"Process RSS", "Sampled cache", "Storage cache", "GPU heap estimate"};
+    for (unsigned i = 0; i < 4; ++i) {
         auto* heading = label(memory_labels[i], "resource-label");
-        gtk_widget_set_tooltip_text(heading, memory_tips[i]);
-        gtk_grid_attach(GTK_GRID(resource_grid), heading, 0, i + 13, 1, 1);
-        if (i == 3) heap_label_ = heading;
-        auto* value_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
-        memory_values_[i] = label("Unavailable", "resource-value");
+        gtk_grid_attach(GTK_GRID(memory_grid), heading, 0, i, 1, 1);
+        memory_values_[i] = label("–", "resource-value");
         gtk_label_set_xalign(GTK_LABEL(memory_values_[i]), 1);
-        gtk_label_set_ellipsize(GTK_LABEL(memory_values_[i]), PANGO_ELLIPSIZE_END);
-        gtk_widget_set_hexpand(memory_values_[i], true);
-        gtk_box_append(GTK_BOX(value_box), memory_values_[i]);
+        gtk_grid_attach(GTK_GRID(memory_grid), memory_values_[i], 2, i, 1, 1);
         if (i) {
             memory_gauges_[i - 1] = gtk_progress_bar_new();
             gtk_widget_add_css_class(memory_gauges_[i - 1], "resource-gauge");
-            gtk_widget_set_visible(memory_gauges_[i - 1], false);
-            gtk_box_append(GTK_BOX(value_box), memory_gauges_[i - 1]);
+            gtk_widget_set_hexpand(memory_gauges_[i - 1], true);
+            gtk_widget_set_size_request(memory_gauges_[i - 1], 40, -1);
+            gtk_widget_set_valign(memory_gauges_[i - 1], GTK_ALIGN_CENTER);
+            gtk_grid_attach(GTK_GRID(memory_grid), memory_gauges_[i - 1], 1, i, 1, 1);
         }
-        gtk_grid_attach(GTK_GRID(resource_grid), value_box, 1, i + 13, 1, 1);
     }
-    gtk_box_append(GTK_BOX(resource_panel_), resource_grid);
-    resource_scope_ = label("Latest resource sample · unavailable", "resource-scope");
-    gtk_label_set_wrap(GTK_LABEL(resource_scope_), true);
-    gtk_widget_set_vexpand(resource_scope_, true);
-    gtk_widget_set_valign(resource_scope_, GTK_ALIGN_END);
-    gtk_widget_set_tooltip_text(resource_scope_, "Latest shader and memory sample, independent of the selected frame. Resource receipt age and source poll ages are separate.");
-    gtk_box_append(GTK_BOX(resource_panel_), resource_scope_);
-    gtk_flow_box_insert(GTK_FLOW_BOX(resource_row), resource_panel_, -1);
-    gtk_box_append(GTK_BOX(live), resource_row);
+    gtk_box_append(GTK_BOX(memory_panel_), memory_grid);
+    memory_scope_ = label("GPU source – · received –", "resource-scope");
+    gtk_box_append(GTK_BOX(memory_panel_), memory_scope_);
+    gtk_box_append(GTK_BOX(side), memory_panel_);
+    gtk_flow_box_insert(GTK_FLOW_BOX(lower), side, -1);
+    gtk_box_append(GTK_BOX(live), lower);
+    auto* footer = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 24);
+    gtk_widget_add_css_class(footer, "profiler-footer");
+    gtk_box_append(GTK_BOX(footer), label("Main VideoOut", "resource-scope"));
+    freshness_ = label("Latest frame received –", "monitor-freshness");
+    gtk_box_append(GTK_BOX(footer), freshness_);
+    stall_state_ = label("", "resource-scope");
+    gtk_widget_set_hexpand(stall_state_, true);
+    gtk_label_set_xalign(GTK_LABEL(stall_state_), 1);
+    gtk_box_append(GTK_BOX(footer), stall_state_);
+    gtk_box_append(GTK_BOX(live), footer);
 
     auto* console = gtk_box_new(GTK_ORIENTATION_VERTICAL, 14);
     gtk_widget_set_vexpand(console, true);
@@ -476,8 +532,9 @@ ProfilerView::ProfilerView(std::function<void(bool)> request_monitoring)
 }
 
 ProfilerView::~ProfilerView() {
-    g_signal_handlers_disconnect_by_data(monitoring_switch_, this);
+    g_signal_handlers_disconnect_by_data(monitoring_toggle_, this);
     g_signal_handlers_disconnect_by_data(frame_selector_, this);
+    g_signal_handlers_disconnect_by_data(chart_fps_button_, this);
     g_signal_handlers_disconnect_by_data(follow_live_, this);
     g_signal_handlers_disconnect_by_data(chart_click_, this);
     gtk_drawing_area_set_draw_func(GTK_DRAWING_AREA(chart_), nullptr, nullptr, nullptr);
@@ -491,8 +548,8 @@ ProfilerView::~ProfilerView() {
 }
 
 void ProfilerView::bridge_status(const BridgeStatus& status, const std::string& mcp_endpoint, const std::string& error) {
-    const std::string connection = status.connected ? "Game connected" :
-        status.port ? (status.error.empty() ? "Waiting for game connection" : "Game connection lost") : "Game bridge unavailable";
+    const std::string connection = status.connected ? "■ Connected" :
+        status.port ? (status.error.empty() ? "Disconnected" : "Connection lost") : "Bridge unavailable";
     gtk_label_set_text(GTK_LABEL(bridge_connection_), connection.c_str());
     if (status.connected) gtk_widget_add_css_class(bridge_connection_, "connected");
     else gtk_widget_remove_css_class(bridge_connection_, "connected");
@@ -529,14 +586,13 @@ void ProfilerView::monitoring(const MonitoringSnapshot& snapshot) {
     if (!snapshot.error.empty()) state += " · " + snapshot.error;
     gtk_label_set_text(GTK_LABEL(monitoring_state_), state.c_str());
     gtk_widget_set_tooltip_text(monitoring_state_, state.c_str());
-    updating_switch_ = true;
-    gtk_switch_set_active(GTK_SWITCH(monitoring_switch_), snapshot.pending && snapshot.requested_enabled ?
+    updating_monitoring_ = true;
+    gtk_check_button_set_active(GTK_CHECK_BUTTON(monitoring_toggle_), snapshot.pending && snapshot.requested_enabled ?
         *snapshot.requested_enabled : snapshot.enabled);
-    gtk_switch_set_state(GTK_SWITCH(monitoring_switch_), snapshot.enabled);
-    updating_switch_ = false;
-    gtk_widget_set_sensitive(monitoring_switch_, snapshot.connected && snapshot.supported && !snapshot.pending &&
+    updating_monitoring_ = false;
+    gtk_widget_set_sensitive(monitoring_toggle_, snapshot.connected && snapshot.supported && !snapshot.pending &&
         static_cast<bool>(request_monitoring_));
-    gtk_widget_set_tooltip_text(monitoring_switch_, !snapshot.connected ? "Connect a game to change monitoring" :
+    gtk_widget_set_tooltip_text(monitoring_toggle_, !snapshot.connected ? "Connect a game to change monitoring" :
         !snapshot.supported ? "Frame pacing measurements are unavailable for this session" :
         snapshot.pending ? "Waiting for the game to confirm monitoring state" : "Collect frame pacing measurements");
     for (const auto* style : {"active", "pending"}) gtk_widget_remove_css_class(monitoring_state_, style);
@@ -547,33 +603,35 @@ void ProfilerView::monitoring(const MonitoringSnapshot& snapshot) {
     const std::optional<double> values[] = {stats.estimated_fps, stats.mean_interval_us,
         stats.p95_interval_us, stats.worst_interval_us};
     for (std::size_t i = 0; i < metrics_.size(); ++i) {
-        const auto text = values[i] ? number(*values[i] / (i ? 1000.0 : 1.0)) + (i ? " ms" : " FPS") : "Unavailable";
+        const auto text = values[i] ? number(*values[i] / (i ? 1000.0 : 1.0), i ? 2 : 1) + (i ? " ms" : " FPS") : "–";
         gtk_label_set_text(GTK_LABEL(metrics_[i]), text.c_str());
+        gtk_widget_set_tooltip_text(metrics_[i], text.c_str());
         if (retained) gtk_widget_add_css_class(metrics_[i], "stale");
         else gtk_widget_remove_css_class(metrics_[i], "stale");
     }
     const auto window = std::string("Last 1 s") + (retained ? " · retained observation" :
         snapshot.has_frames && !stats.complete ? " · partial window" : "");
     gtk_label_set_text(GTK_LABEL(window_state_), window.c_str());
-    std::string coverage = "Sample coverage unavailable";
+    gtk_widget_set_tooltip_text(window_state_, window.c_str());
+    std::string coverage = "– / – samples · –";
     if (snapshot.has_frames) {
-        coverage = std::to_string(stats.sample_count) + " valid intervals";
-        if (stats.coverage) coverage += " · " + std::to_string(stats.observed_samples) + " / " +
-            std::to_string(stats.expected_samples) + " samples · " + number(*stats.coverage * 100) + "% coverage";
-        else coverage += " · coverage unavailable";
-        if (!stats.complete) coverage += " · incomplete window";
-        if (stats.missing_samples) coverage += " · " + std::to_string(stats.missing_samples) + " missing samples";
-        if (stats.sender_dropped_samples) coverage += " · " + std::to_string(stats.sender_dropped_samples) + " sender drops (epoch)";
-        if (stats.packet_gaps) coverage += " · " + std::to_string(stats.packet_gaps) + " packet gaps (epoch)";
-        if (snapshot.history_truncated) coverage += " · older detail discarded";
+        coverage = std::to_string(stats.observed_samples) + " / " + std::to_string(stats.expected_samples) + " samples · " +
+            (stats.coverage ? number(*stats.coverage * 100, 1) + "%" : "–");
     }
+    const auto coverage_tip = std::to_string(stats.sample_count) + " valid intervals; " + std::to_string(stats.missing_samples) +
+        " missing samples; " + std::to_string(stats.sender_dropped_samples) + " sender drops; " + std::to_string(stats.packet_gaps) +
+        " packet gaps. " + (stats.complete ? "Complete source window." : "Incomplete source window.");
+    gtk_widget_set_tooltip_text(coverage_, coverage_tip.c_str());
     gtk_label_set_text(GTK_LABEL(coverage_), coverage.c_str());
-    std::string freshness = "No frame data";
-    if (snapshot.age_ms) freshness = (retained ? "Stale · last received " : "Last received ") +
+    std::string freshness = "Latest frame received –";
+    if (snapshot.age_ms) freshness = (retained ? "Stale · last received " : "Latest frame received ") +
         number(*snapshot.age_ms / 1000.0) + " s ago";
     gtk_label_set_text(GTK_LABEL(freshness_), freshness.c_str());
     if (retained) gtk_widget_add_css_class(freshness_, "stale");
     else gtk_widget_remove_css_class(freshness_, "stale");
+    const auto stall = snapshot.stall_evidence == "instrumented_work_active" ? "Missing frames · instrumented work active" :
+        snapshot.stall_evidence == "unknown" ? "Missing frames · cause unknown" : "";
+    gtk_label_set_text(GTK_LABEL(stall_state_), stall);
     update_frame_detail();
     update_resources();
     gtk_widget_queue_draw(chart_);
@@ -581,135 +639,102 @@ void ProfilerView::monitoring(const MonitoringSnapshot& snapshot) {
 
 void ProfilerView::update_resources() {
     const auto& resources = monitoring_.resources;
-    const bool available = resources.has_sample && resources.sample.has_value();
-    const bool retained = available && (!monitoring_.connected || !monitoring_.enabled ||
-        !resources.supported || resources.stale);
-    std::string state;
-    if (!monitoring_.connected) state = "Disconnected";
-    else if (!resources.supported) state = "Unavailable";
-    else if (!monitoring_.enabled) state = "Off";
-    else if (!available) state = "Waiting";
-    else state = resources.stale ? "Stale" : "Live";
-    gtk_label_set_text(GTK_LABEL(resource_state_), state.c_str());
-    if (retained) gtk_widget_add_css_class(resource_panel_, "stale");
-    else gtk_widget_remove_css_class(resource_panel_, "stale");
-    std::string scope = "Latest resource sample";
-    if (available && resources.age_ms) scope += " · " + number(*resources.age_ms / 1000.0) + " s ago";
-    else scope += " · unavailable";
-    if (retained) scope += " · retained";
-    if (resources.work_delta) scope += "\nWork window " + number(resources.work_window_us / 1000000.0) + " s · elapsed wall time";
-    else scope += "\nWork window unavailable";
-    if (!monitoring_.stall_evidence.empty())
-        scope += monitoring_.stall_evidence == "instrumented_work_active" ?
-            "\nNo fresh frames · instrumented work active" : "\nNo fresh frames · stall cause unknown";
-    gtk_label_set_text(GTK_LABEL(resource_scope_), scope.c_str());
-    for (auto* value : work_values_) {
-        gtk_label_set_text(GTK_LABEL(value), "Unavailable");
-        gtk_widget_set_tooltip_text(value, nullptr);
+    const bool available = resources.sample.has_value();
+    const bool retained = available && (!monitoring_.connected || !monitoring_.enabled || resources.stale);
+    for (auto* panel : {resource_panel_, memory_panel_}) {
+        if (retained) gtk_widget_add_css_class(panel, "stale");
+        else gtk_widget_remove_css_class(panel, "stale");
     }
-    for (auto* value : memory_values_) gtk_widget_remove_css_class(value, "stale");
-    for (auto* gauge : memory_gauges_) gtk_widget_remove_css_class(gauge, "stale");
-    if (!available) {
-        for (auto* value : shader_values_) {
-            gtk_label_set_text(GTK_LABEL(value), "Unavailable");
-            gtk_widget_set_tooltip_text(value, nullptr);
-        }
-        for (auto* value : memory_values_) {
-            gtk_label_set_text(GTK_LABEL(value), "Unavailable");
-            gtk_widget_set_tooltip_text(value, nullptr);
-        }
-        for (auto* gauge : memory_gauges_) gtk_widget_set_visible(gauge, false);
-        gtk_label_set_text(GTK_LABEL(heap_label_), "GPU heap");
-        return;
-    }
-    const auto& sample = *resources.sample;
-    const auto& shaders = sample.shaders;
-    const std::string shader_texts[] = {
-        std::to_string(shaders.preparation_queue_pending) + " queued · " + std::to_string(shaders.preparation_active) + " active",
-        std::to_string(shaders.translations_active) + " active · " + std::to_string(shaders.translations_completed) + " completed",
-        std::to_string(shaders.cached_variants_count) + " · " + bytes(static_cast<long double>(shaders.source_code_bytes) + shaders.variant_spirv_bytes) + " CPU",
-        std::to_string(shaders.disk_cache_hits) + " hits / " + std::to_string(shaders.disk_cache_misses) + " misses"
-    };
-    for (unsigned i = 0; i < shader_values_.size(); ++i) {
-        gtk_label_set_text(GTK_LABEL(shader_values_[i]), shader_texts[i].c_str());
-        gtk_widget_set_tooltip_text(shader_values_[i], shader_texts[i].c_str());
-    }
-    const auto pipelines = shader_texts[1] + "\nTranslation operations, not distinct shaders. Completed counts cover the process lifetime.\nPipeline creation/link calls: " +
-        std::to_string(shaders.pipeline_builds_active) + " active, " + std::to_string(shaders.pipeline_builds_completed) +
-        " successfully completed.\nPipeline optimization: " + std::to_string(shaders.pipeline_optimization_queue_pending) +
-        " queued, " + std::to_string(shaders.pipeline_optimizations_active) + " active.";
-    gtk_widget_set_tooltip_text(shader_values_[1], pipelines.c_str());
-    const auto payload = shader_texts[2] + "\nCopied guest code: " + bytes(shaders.source_code_bytes) +
-        "; variant SPIR-V: " + bytes(shaders.variant_spirv_bytes) + ".\nCompiled variants retained by the source cache. CPU payload counts copied guest-code and SPIR-V words; excludes IR, metadata, temporary allocations and native driver memory.";
-    gtk_widget_set_tooltip_text(shader_values_[2], payload.c_str());
-    const auto cache = shader_texts[3] + "\nProcess totals: " + std::to_string(shaders.disk_cache_writes) +
-        " writes, " + std::to_string(shaders.disk_cache_load_failures) + " load failures, " +
-        std::to_string(shaders.disk_cache_write_failures) + " write failures.";
-    gtk_widget_set_tooltip_text(shader_values_[3], cache.c_str());
-    if (sample.activity) {
-        for (unsigned i = 0; i < sample.activity->size(); ++i) {
-            const auto& work = (*sample.activity)[i];
-            std::string text = std::to_string(work.active) + " active";
+    const auto scope = resources.work_delta ? "Window " + number(resources.work_window_us / 1000000.0) + " s" :
+        resources.state == "disabled" ? std::string("Off") : std::string("Window –");
+    gtk_label_set_text(GTK_LABEL(resource_state_), scope.c_str());
+    const unsigned work_indices[] = {1, 2, 3, 5};
+    for (unsigned row = 0; row < activity_values_.size(); ++row) {
+        std::array<std::string, 3> values{"–", "–", "–"};
+        std::string tip = "Work timing unavailable";
+        bool active = false;
+        if (available && resources.sample->activity) {
+            const auto& work = (*resources.sample->activity)[work_indices[row]];
+            active = work.active > 0;
+            values[0] = std::to_string(work.active);
+            values[1] = std::to_string(work.completed);
             if (resources.work_delta) {
-                const auto& delta = (*resources.work_delta)[i];
-                text += " · " + std::to_string(delta.completed) + " done";
-                if (delta.failed) text += " · " + std::to_string(delta.failed) + " failed";
-                text += " · " + number(delta.total_us / 1000.0) + " ms";
-            } else text += " · window unavailable";
-            if (i == 0) text = std::to_string(shaders.preparation_queue_pending) + " queued · " + text;
-            if (i == 4) text = std::to_string(shaders.pipeline_optimization_queue_pending) + " queued · " + text;
-            auto* widget = i < 2 ? shader_values_[i] : work_values_[i - 2];
-            gtk_label_set_text(GTK_LABEL(widget), text.c_str());
-            const auto tip = text + "\nObserved work window: " + number(resources.work_window_us / 1000000.0) +
-                " s. Duration includes completed and failed attempts.\nProcess lifetime: " +
-                std::to_string(work.started) + " started, " + std::to_string(work.completed) + " completed, " +
-                std::to_string(work.failed) + " failed; elapsed " + number(work.total_us / 1000.0) +
-                " ms; longest " + number(work.max_us / 1000.0) +
-                " ms.\nElapsed wall time includes scheduling/waits. Nested work overlaps; do not sum. This is not GPU execution time.\nSpecialization includes disk-cache lookup and SPIR-V optimization. Present includes queue-present calls and presentation fences. Idle includes retirement and synchronization.";
-            gtk_widget_set_tooltip_text(widget, tip.c_str());
+                const auto& delta = (*resources.work_delta)[work_indices[row]];
+                values[2] = number(delta.total_us / 1000.0, 2) + " ms";
+            }
+            tip = "Process lifetime: " + std::to_string(work.started) + " started, " + std::to_string(work.completed) +
+                " completed, " + std::to_string(work.failed) + " failed; elapsed " + number(work.total_us / 1000.0, 2) +
+                " ms; longest finished attempt " + number(work.max_us / 1000.0, 2) +
+                " ms.\nDone counts completed attempts since process start. Window elapsed includes completed and failed attempts. Nested scopes overlap; not GPU execution time.";
+        } else if (available && row == 0) {
+            values[0] = std::to_string(resources.sample->shaders.translations_active);
+            values[1] = std::to_string(resources.sample->shaders.translations_completed);
+        } else if (available && row == 2) {
+            values[0] = std::to_string(resources.sample->shaders.pipeline_builds_active);
+            values[1] = std::to_string(resources.sample->shaders.pipeline_builds_completed);
         }
-    } else {
-        const auto build = std::to_string(shaders.pipeline_builds_active) + " active · " + std::to_string(shaders.pipeline_builds_completed) + " total";
-        gtk_label_set_text(GTK_LABEL(work_values_[1]), build.c_str());
-        const auto optimization = std::to_string(shaders.pipeline_optimization_queue_pending) + " queued · " + std::to_string(shaders.pipeline_optimizations_active) + " active";
-        gtk_label_set_text(GTK_LABEL(work_values_[2]), optimization.c_str());
+        for (unsigned col = 0; col < 3; ++col) {
+            gtk_label_set_text(GTK_LABEL(activity_values_[row][col]), values[col].c_str());
+            gtk_widget_set_tooltip_text(activity_values_[row][col], tip.c_str());
+            gtk_widget_remove_css_class(activity_values_[row][col], "work-active");
+        }
+        if (active) gtk_widget_add_css_class(activity_values_[row][0], "work-active");
     }
-    const auto source_age = [](const std::optional<double>& age) {
-        return age ? number(*age / 1000.0) + " s old" : std::string("age unavailable");
-    };
-    const auto& memory = sample.memory;
-    const auto rss = memory.process_rss_bytes ? bytes(*memory.process_rss_bytes) : "Unavailable";
-    gtk_label_set_text(GTK_LABEL(memory_values_[0]), rss.c_str());
-    const auto rss_tip = "Game process resident memory: " + rss + "\nSource poll " + source_age(resources.process_rss_age_ms);
-    gtk_widget_set_tooltip_text(memory_values_[0], rss_tip.c_str());
-    if (resources.process_rss_age_ms && *resources.process_rss_age_ms >= 10000)
-        gtk_widget_add_css_class(memory_values_[0], "stale");
-    const std::optional<std::uint64_t> usages[] = {memory.sampled_cache_bytes, memory.storage_cache_bytes, memory.gpu_heap_usage_bytes};
-    const std::optional<std::uint64_t> budgets[] = {memory.sampled_cache_budget_bytes, memory.storage_cache_budget_bytes, memory.gpu_heap_budget_bytes};
-    for (unsigned i = 0; i < memory_gauges_.size(); ++i) {
-        const bool has_budget = budgets[i] && *budgets[i] > 0;
-        auto text = usages[i] ? bytes(*usages[i]) : "Unavailable";
-        if (has_budget) text += " / " + bytes(*budgets[i]);
-        else if (usages[i]) text += " / unavailable";
-        gtk_label_set_text(GTK_LABEL(memory_values_[i + 1]), text.c_str());
-        const auto tip = text + (i == 2 ? "\nDriver estimate for the largest device-local heap; source poll " + source_age(resources.gpu_heap_age_ms) :
-            "\nImage cache accounting / configured cache budget; not total physical GPU memory.");
-        gtk_widget_set_tooltip_text(memory_values_[i + 1], tip.c_str());
-        const bool has_ratio = usages[i] && has_budget;
-        gtk_widget_set_visible(memory_gauges_[i], has_ratio);
-        gtk_widget_remove_css_class(memory_gauges_[i], "over-budget");
-        if (has_ratio) {
-            const auto ratio = static_cast<double>(*usages[i]) / *budgets[i];
-            gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(memory_gauges_[i]), std::clamp(ratio, 0.0, 1.0));
-            if (ratio > 1) gtk_widget_add_css_class(memory_gauges_[i], "over-budget");
+    const auto queues = available ? "Preparation " + std::to_string(resources.sample->shaders.preparation_queue_pending) +
+        " queued · Optimization " + std::to_string(resources.sample->shaders.pipeline_optimization_queue_pending) + " queued" :
+        "Preparation – queued · Optimization – queued";
+    gtk_label_set_text(GTK_LABEL(queues_), queues.c_str());
+    std::array<std::string, 3> cache{"–", "–", "–"};
+    for (auto* widget : shader_values_) gtk_widget_set_tooltip_text(widget, nullptr);
+    if (available) {
+        const auto& shader = resources.sample->shaders;
+        cache = {std::to_string(shader.cached_variants_count), bytes(static_cast<long double>(shader.source_code_bytes) + shader.variant_spirv_bytes),
+            std::to_string(shader.disk_cache_hits) + " hits / " + std::to_string(shader.disk_cache_misses) + " misses"};
+        const auto tip = "Process lifetime cache totals. Copied code " + bytes(shader.source_code_bytes) +
+            "; retained variant SPIR-V " + bytes(shader.variant_spirv_bytes) + ". Excludes IR, metadata and native driver allocations.\n" +
+            std::to_string(shader.disk_cache_writes) + " writes; " + std::to_string(shader.disk_cache_load_failures) + " load failures; " +
+            std::to_string(shader.disk_cache_write_failures) + " write failures.";
+        for (auto* widget : shader_values_) gtk_widget_set_tooltip_text(widget, tip.c_str());
+    }
+    for (unsigned i = 0; i < cache.size(); ++i) gtk_label_set_text(GTK_LABEL(shader_values_[i]), cache[i].c_str());
+    std::string details = "Elapsed wall time · overlapping scopes";
+    if (available && resources.sample->activity) {
+        details += "\nOther process work (not selected-frame attribution):";
+        for (unsigned i : {0u, 4u, 6u, 7u, 8u, 9u, 10u}) {
+            const auto& work = (*resources.sample->activity)[i];
+            details += "\n" + std::string(resource_work_names[i]) + ": " + std::to_string(work.active) + " active";
+            if (resources.work_delta) details += "; " + number((*resources.work_delta)[i].total_us / 1000.0, 2) + " ms in observed window";
         }
     }
-    const auto heap_title = "GPU heap\n" + source_age(resources.gpu_heap_age_ms);
-    gtk_label_set_text(GTK_LABEL(heap_label_), heap_title.c_str());
-    if (resources.gpu_heap_age_ms && *resources.gpu_heap_age_ms >= 10000) {
-        gtk_widget_add_css_class(memory_values_[3], "stale");
-        gtk_widget_add_css_class(memory_gauges_[2], "stale");
+    gtk_widget_set_tooltip_text(resource_scope_, details.c_str());
+    for (unsigned i = 0; i < memory_values_.size(); ++i) {
+        std::string text = "–";
+        gtk_widget_remove_css_class(memory_values_[i], "stale");
+        if (available) {
+            const auto& m = resources.sample->memory;
+            const std::optional<std::uint64_t> values[] = {m.process_rss_bytes, m.sampled_cache_bytes, m.storage_cache_bytes, m.gpu_heap_usage_bytes};
+            const std::optional<std::uint64_t> budgets[] = {m.sampled_cache_budget_bytes, m.storage_cache_budget_bytes, m.gpu_heap_budget_bytes};
+            if (values[i]) text = bytes(*values[i]);
+            if (i) text += " / " + (budgets[i - 1] ? bytes(*budgets[i - 1]) : "–");
+            if (i) {
+                const bool known = values[i] && budgets[i - 1];
+                const double fraction = known ? static_cast<double>(*values[i]) / *budgets[i - 1] : 0;
+                gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(memory_gauges_[i - 1]), std::clamp(fraction, 0.0, 1.0));
+                if (fraction > 1) gtk_widget_add_css_class(memory_gauges_[i - 1], "over-budget");
+                else gtk_widget_remove_css_class(memory_gauges_[i - 1], "over-budget");
+            }
+        } else if (i) gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(memory_gauges_[i - 1]), 0);
+        gtk_label_set_text(GTK_LABEL(memory_values_[i]), text.c_str());
     }
+    const auto age = resources.gpu_heap_age_ms ? number(*resources.gpu_heap_age_ms / 1000.0, 1) + " s old" : "–";
+    const auto receipt = resources.age_ms ? number(*resources.age_ms / 1000.0, 1) + " s ago" : "–";
+    const auto memory_scope = "GPU sample " + age + (retained ? " · retained" : "");
+    gtk_label_set_text(GTK_LABEL(memory_scope_), memory_scope.c_str());
+    if (resources.gpu_heap_age_ms && *resources.gpu_heap_age_ms >= 10000) gtk_widget_add_css_class(memory_scope_, "work-active");
+    else gtk_widget_remove_css_class(memory_scope_, "work-active");
+    const auto memory_tip = "Received " + receipt + ". Process RSS and texture-cache accounting have separate scopes. GPU heap is a driver estimate for the largest device-local heap.\nRSS source: " +
+        (resources.process_rss_age_ms ? number(*resources.process_rss_age_ms / 1000.0) + " s old" : "–");
+    gtk_widget_set_tooltip_text(memory_panel_, memory_tip.c_str());
 }
 
 void ProfilerView::update_frame_detail() {
@@ -727,12 +752,16 @@ void ProfilerView::update_frame_detail() {
         }
     }
     gtk_widget_set_sensitive(frame_selector_, !monitoring_.samples.empty());
-    gtk_widget_set_sensitive(follow_live_, inspected_.has_value());
-    const auto frame = sample ? std::to_string(sample->frame) : "Unavailable";
-    const auto stream = sample ? std::to_string(sample->output_handle) + " · generation " +
-        std::to_string(sample->output_generation) : "Unavailable";
-    const auto interval = sample && sample->flip_interval_us ? number(*sample->flip_interval_us / 1000.0) + " ms" : "Unavailable";
+    updating_follow_ = true;
+    gtk_check_button_set_active(GTK_CHECK_BUTTON(follow_live_), !inspected_.has_value());
+    updating_follow_ = false;
+    gtk_widget_set_sensitive(follow_live_, monitoring_.has_frames);
+    const auto frame = sample ? "Frame " + std::to_string(sample->frame) : "Frame –";
+    const auto stream = sample ? "Output " + std::to_string(sample->output_handle) + " / generation " +
+        std::to_string(sample->output_generation) : "Output – / generation –";
+    const auto interval = sample && sample->flip_interval_us ? "Flip interval " + number(*sample->flip_interval_us / 1000.0, 2) + " ms" : "Flip interval –";
     gtk_label_set_text(GTK_LABEL(frame_identity_), frame.c_str());
+    gtk_label_set_text(GTK_LABEL(consumer_frame_), frame.c_str());
     gtk_label_set_text(GTK_LABEL(frame_stream_), stream.c_str());
     gtk_label_set_text(GTK_LABEL(frame_interval_), interval.c_str());
     std::string scope = "No frame selected";
@@ -744,7 +773,7 @@ void ProfilerView::update_frame_detail() {
         else if (sample->missing_before) scope += " · " + std::to_string(sample->missing_before) + " samples missing before this frame";
         if (monitoring_.stale || !monitoring_.enabled || !monitoring_.connected) scope += " · retained data";
     }
-    gtk_label_set_text(GTK_LABEL(frame_scope_), scope.c_str());
+    gtk_widget_set_tooltip_text(frame_identity_, scope.c_str());
 }
 
 void ProfilerView::inspect_chart(double x, double y) {
@@ -754,14 +783,17 @@ void ProfilerView::inspect_chart(double x, double y) {
     const double plot_height = height - chart_top - chart_bottom;
     if (monitoring_.samples.empty() || plot_width <= 0 || plot_height <= 0 || x < chart_left ||
         x > width - chart_right || y < chart_top || y > height - chart_bottom) return;
-    const auto end = monitoring_.samples.back().timestamp_us;
-    const double maximum = chart_maximum(monitoring_);
+    const auto end = chart_end(monitoring_);
+    const double maximum = chart_maximum(monitoring_, chart_fps_);
     const MonitoringSample* closest = nullptr;
     double distance = 24 * 24;
-    for (const auto& sample : monitoring_.samples) {
+    for (std::size_t i = 0; i < monitoring_.samples.size(); ++i) {
+        const auto& sample = monitoring_.samples[i];
         if (!sample.flip_interval_us || sample.timestamp_us > end || end - sample.timestamp_us > 60000000) continue;
         const double px = chart_left + plot_width * (1.0 - (end - sample.timestamp_us) / 60000000.0);
-        const double py = chart_top + plot_height * (1.0 - *sample.flip_interval_us / 1000.0 / maximum);
+        const auto value = chart_value(monitoring_, i, chart_fps_);
+        if (!value) continue;
+        const double py = chart_top + plot_height * (1.0 - *value / maximum);
         const double candidate = (px - x) * (px - x) + (py - y) * (py - y);
         if (candidate < distance) { closest = &sample; distance = candidate; }
     }
@@ -776,20 +808,21 @@ void ProfilerView::draw_chart(cairo_t* context, int width, int height) noexcept 
         const double plot_width = width - chart_left - chart_right;
         const double plot_height = height - chart_top - chart_bottom;
         if (plot_width <= 0 || plot_height <= 0) return;
-        const double maximum = chart_maximum(monitoring_);
+        const double maximum = chart_maximum(monitoring_, chart_fps_);
         cairo_select_font_face(context, "Sans", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_NORMAL);
-        cairo_set_font_size(context, 11);
-        for (unsigned tick = 0; tick <= 4; ++tick) {
-            const double y = chart_top + plot_height * tick / 4.0;
+        cairo_set_font_size(context, 12);
+        const unsigned ticks = chart_fps_ ? 3 : 4;
+        for (unsigned tick = 0; tick <= ticks; ++tick) {
+            const double y = chart_top + plot_height * tick / ticks;
             cairo_set_source_rgb(context, 0.14, 0.24, 0.30);
             cairo_set_line_width(context, 1);
             cairo_move_to(context, chart_left, y);
             cairo_line_to(context, width - chart_right, y);
             cairo_stroke(context);
             cairo_set_source_rgb(context, 0.56, 0.68, 0.76);
-            chart_text(context, chart_left - 10, y + 4, number(maximum * (1 - tick / 4.0), 0), true);
+            chart_text(context, chart_left - 10, y + 4, number(maximum * (1 - static_cast<double>(tick) / ticks), 0), true);
         }
-        chart_text(context, 10, 12, "ms");
+        chart_text(context, 10, 12, chart_fps_ ? "FPS" : "ms");
         for (unsigned tick = 0; tick <= 6; ++tick) {
             const double x = chart_left + plot_width * tick / 6.0;
             cairo_set_source_rgb(context, 0.12, 0.21, 0.28);
@@ -808,25 +841,29 @@ void ProfilerView::draw_chart(cairo_t* context, int width, int height) noexcept 
             chart_text(context, chart_left + (plot_width - extent.width) / 2, chart_top + plot_height / 2, text);
             return;
         }
-        const auto end = monitoring_.samples.back().timestamp_us;
+        const auto end = chart_end(monitoring_);
         auto position = [&](const MonitoringSample& sample) {
             return chart_left + plot_width * (1.0 - (end - sample.timestamp_us) / 60000000.0);
         };
         const MonitoringSample* previous = nullptr;
         bool has_interval = false;
+        double previous_value = 0;
         cairo_save(context);
         cairo_rectangle(context, chart_left, chart_top - 1, plot_width + 1, plot_height + 2);
         cairo_clip(context);
-        for (const auto& sample : monitoring_.samples) {
+        for (std::size_t i = 0; i < monitoring_.samples.size(); ++i) {
+            const auto& sample = monitoring_.samples[i];
             if (sample.timestamp_us > end || end - sample.timestamp_us > 60000000) continue;
-            if (!sample.flip_interval_us) { previous = nullptr; continue; }
+            const auto value = chart_value(monitoring_, i, chart_fps_);
+            if (!value) { previous = nullptr; continue; }
             has_interval = true;
             const double x = position(sample);
-            const double y = chart_top + plot_height * (1.0 - *sample.flip_interval_us / 1000.0 / maximum);
+            const double y = chart_top + plot_height * (1.0 - *value / maximum);
             const bool gap = sample.missing_before || (previous &&
                 (sample.completed_flip_count != previous->completed_flip_count + 1 ||
                  sample.monitoring_epoch != previous->monitoring_epoch || sample.output_handle != previous->output_handle ||
-                 sample.output_generation != previous->output_generation));
+                 sample.output_generation != previous->output_generation ||
+                 sample.timestamp_us - previous->timestamp_us >= 1000000));
             if (gap && previous) {
                 cairo_set_source_rgba(context, 0.97, 0.72, 0.28, 0.13);
                 cairo_rectangle(context, position(*previous), chart_top, std::max(2.0, x - position(*previous)), plot_height);
@@ -835,7 +872,7 @@ void ProfilerView::draw_chart(cairo_t* context, int width, int height) noexcept 
             cairo_set_source_rgb(context, 0.0, 0.83, 0.92);
             cairo_set_line_width(context, 1.5);
             if (previous && !gap) {
-                const double py = chart_top + plot_height * (1.0 - *previous->flip_interval_us / 1000.0 / maximum);
+                const double py = chart_top + plot_height * (1.0 - previous_value / maximum);
                 cairo_move_to(context, position(*previous), py);
                 cairo_line_to(context, x, y);
                 cairo_stroke(context);
@@ -844,6 +881,7 @@ void ProfilerView::draw_chart(cairo_t* context, int width, int height) noexcept 
                 cairo_fill(context);
             }
             previous = &sample;
+            previous_value = *value;
         }
         if (inspected_ && inspected_->timestamp_us <= end && end - inspected_->timestamp_us <= 60000000) {
             const double x = position(*inspected_);
@@ -858,7 +896,7 @@ void ProfilerView::draw_chart(cairo_t* context, int width, int height) noexcept 
         cairo_restore(context);
         if (!has_interval) {
             cairo_set_source_rgb(context, 0.58, 0.69, 0.77);
-            chart_text(context, chart_left + 18, chart_top + plot_height / 2, "First completion received · waiting for a valid interval");
+            chart_text(context, chart_left + 18, chart_top + plot_height / 2, chart_fps_ ? "Waiting for one second of reliable flip completions" : "First completion received · waiting for a valid interval");
         }
     } catch (...) {
         g_printerr("FrameRift: could not draw frame interval history\n");

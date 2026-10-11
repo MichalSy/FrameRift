@@ -319,6 +319,11 @@ private:
     void show_page(const char* page) {
         gtk_stack_set_visible_child_name(GTK_STACK(pages_), page);
         const bool library = g_str_equal(page, "library");
+        if (library) gtk_widget_remove_css_class(window_, "profiler-window");
+        else gtk_widget_add_css_class(window_, "profiler-window");
+        gtk_widget_set_visible(bridge_indicator_, library);
+        gtk_box_reorder_child_after(GTK_BOX(gtk_widget_get_parent(folders_action_)), folders_action_,
+            library ? refresh_ : profiler_tab_);
         gtk_widget_set_visible(search_, library);
         gtk_widget_set_visible(refresh_, library);
         for (auto* tab : {library_tab_, profiler_tab_}) {

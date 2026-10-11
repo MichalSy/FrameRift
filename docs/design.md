@@ -15,7 +15,7 @@ The visual direction uses dark graphite surfaces, restrained separators, compact
 
 The UI is native. Animations should provide short, smooth transitions and immediate feedback. Library artwork may feel lively; analysis tools must remain calm and readable. UI performance needs measurement, especially when the game and profiler run together.
 
-The implementation covers the library/cache, automatic folder scanning, Linux launch/rebuild, Profiler console output, local UDP/MCP receiving and game control, Settings with keyring credentials and animated heroes. AnyPS5's optional adapter establishes connection state. The live frame-analysis workspace, captures and saved input scripts below remain design targets; their game-side measurement/execution capabilities are still required.
+The implementation covers the library/cache, automatic folder scanning, Linux launch/rebuild, Profiler console output, local UDP/MCP receiving and game control, Settings with keyring credentials and animated heroes. AnyPS5's optional adapter supplies live flip pacing, shader activity and memory. The native Live dashboard follows profiler-live-v6; detailed frame attribution, captures and saved input scripts remain design targets.
 
 ## View 1: Library
 
@@ -46,15 +46,15 @@ Account for long names, missing logos, very bright images and missing artwork. C
 
 ## View 2: Profiler workspace
 
-![Live profiler design concept](../assets/design/profiler-live-v2.png)
+![Live profiler design concept](../assets/design/profiler-live-v6.png)
 
 ### Live analysis
 
-The planned Profiler has **Live**, **Captures**, **Input scripts** and **Logs** tabs. The game runs in its existing external window; the dashboard does not require embedded rendering. A session strip identifies the game, process state, bridge connection and monitoring state.
+The current Profiler has **Live** and **Logs** views. The game runs in its external window. A compact session strip identifies process, bridge and monitoring state.
 
-The first overview card is **FPS (estimated)**, followed by flip interval, P95 and worst interval for the last second. A selected-frame pane updates once per second while following live data. Top-consumer tables distinguish inclusive driver elapsed time from GPU program aggregates and show their actual frame/window scope. A recent timeline, script selector, capture controls and compact log preview complete the Live view.
+The overview shows estimated FPS and mean/P95/worst flip intervals. A full-width pacing chart defaults to FPS, with a Flip interval toggle and selected-frame footer. Below it, a ten-row consumer table reserves per-frame timing, call counts and share bars. Shader activity and memory occupy the right column. Missing consumer data uses `–` and empty bars; source age and unavailable/stale states remain explicit. The dashboard contains no automation pane.
 
-Missing sources show unavailable/pending states; a ten-second GPU aggregate must never look like a single-frame or one-second measurement. Detailed data requirements, metric definitions and existing-source limits are specified in [Profiler workspace and game input scripts](profiler-workspace.md).
+See [Profiling](profiling.md) for implemented measurement semantics and [native visual review](profiler-design-review.md) for screenshots against the v6 reference. [Profiler workspace and game input scripts](profiler-workspace.md) describes deferred capture and script requirements.
 
 ### Input scripts and captures
 
@@ -86,4 +86,4 @@ Account for font and DPI scaling, sufficient text contrast, reduced motion, clea
 
 ## About the images
 
-The design PNGs show visual targets, with example metrics. They do not demonstrate implemented frame analysis, captures, input scripts or native window integration. The new workspace references use empty screenshot placeholders and contain no generated game artwork. Sources, prompts and ASTRO BOT artwork use in the library concept are documented in [Image sources](../assets/design/README.md).
+The design PNGs show visual targets, with example metrics. They are distinct from native screenshots and do not demonstrate implemented per-frame attribution, captures, input scripts or native window integration. The new workspace references use empty screenshot placeholders and contain no generated game artwork. Sources, prompts and ASTRO BOT artwork use in the library concept are documented in [Image sources](../assets/design/README.md).

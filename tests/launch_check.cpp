@@ -81,8 +81,21 @@ int main() {
         write(original / "media/asset.bin", "Original resource");
         write(runtime / "libc.prx", elf(3));
         write(runtime / "libkernel.prx", elf(3));
+        const auto guard = project / "tools/run_with_memory_guard.py";
+        write(guard, R"(import os, pathlib, sys
+assert 'STEAMGRIDDB_API_KEY' not in os.environ
+assert sys.argv[1] == '--' and sys.argv[3] == '-B'
+assert pathlib.Path(sys.argv[4]) == pathlib.Path(__file__).with_name('run_game.py')
+log = pathlib.Path(os.environ['ANYPS5_MEMORY_LOG'])
+assert log.is_absolute() and log.name == 'memory.jsonl'
+with log.open('x') as output:
+    output.write('{"fixture":true}\n')
+os.environ['FRAMERIFT_MEMORY_GUARD_CHECK'] = 'active'
+os.execv(sys.argv[2], sys.argv[2:])
+)");
         write(project / "tools/run_game.py", R"(import argparse, os, pathlib, sys, time
 assert 'STEAMGRIDDB_API_KEY' not in os.environ
+assert os.environ.get('FRAMERIFT_MEMORY_GUARD_CHECK') == 'active'
 p = argparse.ArgumentParser()
 for name in ('runtime', 'game', 'executable', 'workdir'):
     p.add_argument('--' + name, required=True)
@@ -97,6 +110,9 @@ save.write_text('Live save')
 memory = pathlib.Path('_sd_mem/u1/slot0.bin')
 memory.parent.mkdir(parents=True, exist_ok=True)
 memory.write_text('Memory save')
+shaders = pathlib.Path(args.executable).parent / 'shader_cache'
+shaders.mkdir(exist_ok=True)
+(shaders / 'runtime.bin').write_text('Executable-relative shader cache')
 print('original=' + args.game)
 print('code=' + args.executable)
 print('work=' + args.workdir)
@@ -150,8 +166,9 @@ if (root / 'fail-conversion').exists():
         const auto code = cache / "games/PPSA01234";
         const auto work = data / "saves/PPSA01234";
         const std::array legacy{std::filesystem::path("_sd/legacy.bin"), std::filesystem::path("_sd_mem/u2/slot0.bin"),
-            std::filesystem::path("shader_cache/shader.prx.guest.prx"), std::filesystem::path("controller.json")};
+            std::filesystem::path("controller.json")};
         for (const auto& path : legacy) write(code / path, "Legacy runtime data");
+        write(code / "shader_cache/shader.prx.guest.prx", "Native shader cache");
         write(code / "anyps5-fonts/font.ttf", "Executable-relative font");
         write(code / "anyps5-entitlements.ini", "Executable-relative entitlements");
         const auto prepared = framerift::prepare_game(game, settings, cache, data);
@@ -159,15 +176,19 @@ if (root / 'fail-conversion').exists():
             "Generated code and persistent working data must use separate directories with a stable game ID");
         for (const auto& path : legacy) {
             require(read(work / path) == "Legacy runtime data" && !std::filesystem::exists(code / path),
-                "Legacy saves, shader caches and configuration were not migrated to persistent storage");
+                "Legacy saves and configuration were not migrated to persistent storage");
         }
-        require(read(code / "anyps5-fonts/font.ttf") == "Executable-relative font" &&
+        require(read(code / "shader_cache/shader.prx.guest.prx") == "Native shader cache" &&
+            !std::filesystem::exists(work / "shader_cache") &&
+            read(code / "anyps5-fonts/font.ttf") == "Executable-relative font" &&
             read(code / "anyps5-entitlements.ini") == "Executable-relative entitlements",
-            "Executable-relative AnyPS5 support files must remain beside generated code");
+            "Executable-relative AnyPS5 shader caches and support files must remain beside generated code");
         require(prepared.log_path.parent_path().parent_path() == data / "logs/PPSA01234",
             "Session logs must stay beneath the shared data directory");
         require(read(prepared.conversion_log_path).find("converter stderr") != std::string::npos,
             "Conversion output was not redirected to its session log");
+        require(!std::filesystem::exists(prepared.log_path.parent_path() / "memory.jsonl"),
+            "Conversion must not run through the game's memory guard");
         require(read(code / "app0/sce_module/test.prx.guest.prx") == "Generated module 1",
             "Generated modules were not published beside the executable");
         require(!std::filesystem::exists(code / "media") && !std::filesystem::exists(code / "eboot.bin"),
@@ -204,16 +225,35 @@ if (root / 'fail-conversion').exists():
         const auto log = read(prepared.log_path);
         require(delivered_live && captured == expected && log == expected && completed_log == expected,
             "Live merged output and the closed session log must preserve every raw byte before completion");
+        require(read(prepared.log_path.parent_path() / "memory.jsonl") == "{\"fixture\":true}\n" &&
+            !std::filesystem::exists(work / "memory.jsonl"),
+            "Memory guard measurements must stay in the game session log directory");
         require(read(work / "_sd/live-save.bin") == "Live save" && read(work / "_sd_mem/u1/slot0.bin") == "Memory save" &&
             !std::filesystem::exists(code / "_sd") && !std::filesystem::exists(code / "_sd_mem"),
             "The game's relative save files must be written beneath the shared persistent data directory");
+        write(work / "shader_cache/shader.prx.guest.prx", "Previously migrated shader cache");
         const auto reused = framerift::prepare_game(game, settings, cache, data);
         require(reused.log_path != prepared.log_path && read(project / "conversion-count") == "converted\n",
             "A valid generated executable should be reused with a fresh session log");
+        require(read(code / "shader_cache/runtime.bin") == "Executable-relative shader cache" &&
+            read(code / "shader_cache/shader.prx.guest.prx") == "Native shader cache" &&
+            read(work / "shader_cache/shader.prx.guest.prx") == "Previously migrated shader cache",
+            "Repeated preparation must preserve both shader caches without migrating or conflicting");
+        std::filesystem::rename(guard, guard.string() + ".disabled");
+        bool missing_guard = false;
+        try {
+            framerift::prepare_game(game, settings, cache, data, true);
+        } catch (const std::runtime_error& error) {
+            missing_guard = std::string(error.what()).find("run_with_memory_guard.py") != std::string::npos;
+        }
+        require(missing_guard && read(project / "conversion-count") == "converted\n" && read(code / "game.elf")[8] == 1,
+            "A missing memory guard must fail clearly before conversion or an unguarded launch");
+        std::filesystem::rename(guard.string() + ".disabled", guard);
         const std::array stale{code / "app0/Media/Plugins/stale.prx.guest.prx", code / "app0/Media/Modules/broken.prx",
             code / "app0/old.elf", code / "libStale.prx", code / "game.registry.json", code / "game.stale.prx.guest.prx.registry.json"};
         for (const auto& path : stale) write(path, "Old generated code");
-        const std::array preserved{work / "shader_cache/shader.prx.guest.prx", work / "_sd/save.bin",
+        const std::array preserved{code / "shader_cache/shader.prx.guest.prx", code / "shader_cache/runtime.bin",
+            work / "shader_cache/shader.prx.guest.prx", work / "_sd/save.bin",
             work / "_sd_mem/u1/slot1.bin", work / "devlog/output.log", work / "temp0/resource.bin", work / "assets.registry.json",
             data / "saves/PPSA01234/save.bin"};
         for (const auto& path : preserved) write(path, "Preserved data");
@@ -324,8 +364,7 @@ if (root / 'fail-conversion').exists():
             require(!entry.path().filename().string().starts_with(".convert-"), "Failed conversion staging was not removed");
         }
         write(code / "game.elf", elf(2), true);
-        auto callback_failure = prepared;
-        callback_failure.log_path = prepared.log_path.parent_path() / "callback-failure.log";
+        auto callback_failure = framerift::prepare_game(game, settings, cache, data);
         bool failure_finished = false;
         int output_calls = 0;
         std::string failure_error;
@@ -340,8 +379,8 @@ if (root / 'fail-conversion').exists():
         iterate_until(failure_finished);
         require(output_calls == 1 && failure_error == "Output fixture failed" && exit_status == 7 &&
             read(callback_failure.log_path) == expected, "A display failure must still drain the child and preserve the full raw log");
-        auto log_failure = prepared;
-        log_failure.log_path = "/dev/full";
+        auto log_failure = framerift::prepare_game(game, settings, cache, data);
+        std::filesystem::create_symlink("/dev/full", log_failure.log_path);
         failure_finished = false;
         failure_error.clear();
         captured.clear();

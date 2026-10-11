@@ -23,7 +23,7 @@ Windows, actual gameplay compatibility and embedded game windows remain unverifi
 
 ## Build and run
 
-Requires a C++20 compiler, CMake 3.20+, Ninja, pkg-config, GTK4 4.12+, GTK4 VTE 0.70+ (`vte-2.91-gtk4`), SQLite3, libcurl 7.85+, JSON-GLib, GIO, libsecret, libwebp/libwebpdemux and `glib-compile-resources`, including development packages. Game launch also requires Python 3.
+Requires a C++20 compiler, CMake 3.20+, Ninja, pkg-config, GTK4 4.12+, GTK4 VTE 0.70+ (`vte-2.91-gtk4`), SQLite3, libcurl 7.85+, JSON-GLib, GIO, libsecret, libwebp/libwebpdemux and `glib-compile-resources`, including development packages. Game launch also requires Python 3, Linux cgroup v2, a systemd user manager and the AnyPS5 `run_game.py` and `run_with_memory_guard.py` tools.
 
 ```sh
 cmake -S . -B build -G Ninja -DCMAKE_INSTALL_PREFIX="$HOME/.local"

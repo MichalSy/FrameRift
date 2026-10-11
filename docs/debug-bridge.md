@@ -9,6 +9,14 @@ Additional attribution terms: see NOTICE in the repository root.
 
 FrameRift implements the receiving/command side of an optional runtime bridge. A loopback UDP worker receives events independently of GTK rendering. A local MCP server exposes those events and queues commands for the connected runtime. The AnyPS5 sender, game instrumentation, input execution and screenshot capture are separate work; this change does not add them to AnyPS5.
 
+## Current capabilities
+
+The running FrameRift app exposes nine MCP tools. Library listing, managed game start/stop, asynchronous process status and recent log lines work today using the same game lifecycle as the UI. These five tools do not require a connected game bridge. Process output continues into complete session log files.
+
+The four bridge tools expose connection state, buffered events and asynchronous command receipt/completion. FrameRift's UDP receiving/command server is implemented; an AnyPS5 game-side adapter is still required to produce measurements, apply automated inputs or capture frames. A launched game is not automatically a connected telemetry source. The current server neither stores input scripts nor offers script-list/run tools.
+
+The proposed live profiler, durable game scripts, snapshots and future script MCP tools are specified separately in [Profiler workspace and game input scripts](profiler-workspace.md). That document and its ImageGen references describe planned functionality.
+
 ## Server lifetime and configuration
 
 Both servers start with the primary FrameRift application and remain active across tab changes. The header indicates whether a runtime actually completed the UDP handshake. The Profiler shows connection state, addresses, latest reported frame, event count and detected packet gaps. A running process without a handshake stays disconnected.
@@ -57,7 +65,7 @@ The five game tools use the same runtime session as the Play/Rebuild UI and work
 
 Start and stop return immediately. Poll `get_game_status` for `preparing`, `running`, `stopping` and terminal states `exited`, `stopped`, `failed` or `rebuilt`. Preparation and process failures remain visible in `error`; receipt of a start request is not proof the game started. Stop signals the existing AnyPS5 memory guard so it can terminate the managed scope and drain logs. A canceled preparation never subsequently starts the game. UI navigation does not alter the session.
 
-`get_game_log` reads the current or last managed session's game output, falling back to its conversion log when no game output is available. The result identifies its source/path, includes an array of lines and reports truncation. Reads are bounded, invalid UTF-8 is replaced, and full files remain on disk. No arbitrary file path is accepted. Immediately after app startup, before any managed session, there is no session log to read.
+`get_game_log` reads the current or last managed session's game output, falling back to its conversion log when no game output is available. Omit `lines` for the last five lines, or use an integer from 1 to 200. The result identifies `game_id`, `source` and `path`, includes a `lines` array, and reports `available`, `error` and `truncated`. Each request reads at most the last 256 KiB, invalid UTF-8 is replaced, and full files remain on disk. No arbitrary file path is accepted. Immediately after app startup, before any managed session, there is no session log to read; this tool does not search earlier app sessions.
 
 ### Codex setup
 

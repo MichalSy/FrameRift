@@ -15,7 +15,7 @@ The visual direction uses dark graphite surfaces, restrained separators, compact
 
 The UI is native. Animations should provide short, smooth transitions and immediate feedback. Library artwork may feel lively; analysis tools must remain calm and readable. UI performance needs measurement, especially when the game and profiler run together.
 
-The implementation covers the library/cache, automatic folder scanning, Linux launch/rebuild, Profiler console output, Settings with keyring credentials and animated heroes. The embedded game view and frame-analysis layout below remain design targets.
+The implementation covers the library/cache, automatic folder scanning, Linux launch/rebuild, Profiler console output, local UDP/MCP receiving and game control, Settings with keyring credentials and animated heroes. The live frame-analysis workspace, captures and saved input scripts below remain design targets; the AnyPS5 bridge adapter is still required.
 
 ## View 1: Library
 
@@ -44,29 +44,31 @@ The image shows a possible desktop composition, not required pixel geometry. The
 
 Account for long names, missing logos, very bright images and missing artwork. Cached images and local metadata remain usable offline. Missing artwork should receive a quiet fallback with the title and any available local icon.
 
-## View 2: Game and profiler
+## View 2: Profiler workspace
 
-![Game and profiler design concept](../assets/design/profiler.png)
+![Live profiler design concept](../assets/design/profiler-live-v2.png)
 
-### Playing
+### Live analysis
 
-In the planned integrated view, launching opens a dedicated game view. The game window or surface fills the center. Session actions include stopping the game, returning to the library, opening the profiler, changing presentation and viewing session status.
+The planned Profiler has **Live**, **Captures**, **Input scripts** and **Logs** tabs. The game runs in its existing external window; the dashboard does not require embedded rendering. A session strip identifies the game, process state, bridge connection and monitoring state.
 
-Library covers do not remain as a large sidebar. Returning to the library must not silently launch a second instance. A running game needs clear status and association with its session.
+The first overview card is **FPS (estimated)**, followed by flip interval, P95 and worst interval for the last second. A selected-frame pane updates once per second while following live data. Top-consumer tables distinguish inclusive driver elapsed time from GPU program aggregates and show their actual frame/window scope. A recent timeline, script selector, capture controls and compact log preview complete the Live view.
 
-### Profiler
+Missing sources show unavailable/pending states; a ten-second GPU aggregate must never look like a single-frame or one-second measurement. Detailed data requirements, metric definitions and existing-source limits are specified in [Profiler workspace and game input scripts](profiler-workspace.md).
 
-In the planned **Profiler** layout, game rendering and input remain active. **Frame analysis** appears on the right, with a resizable analysis area below. Splitters should adjust the layout, which can be saved. Analysis panels can close to leave more space for the game.
+### Input scripts and captures
 
-The right panel should explain the selected frame: frame ID, available CPU/GPU times, submission details and, later, draw calls, pipeline changes or shader/pipeline hotspots. Missing data must display "unavailable" or a specific measurement limit. A ten-second aggregate must not look like a single-frame measurement.
+![Input script editor concept](../assets/design/profiler-input-scripts.png)
 
-The lower area initially targets **Frame times** and **Logs**. The concept's **Imports** and **Tests** tabs are possible additional tools, outside the established first-version scope. Imports could explain runtime calls and missing symbols; Tests could organize repeatable launches and measurement runs. Their data sources and interaction need separate design. The current Profiler provides console output; frame analysis remains planned.
+Saved scripts belong to a stable game ID and can be selected from the Live pane or the game's profile. They run immediately by default, with an optional absolute start frame or delayed start. The editor shows offsets relative to the previous planned action and their target expressions. Snapshot and screenshot checkpoints can be included when the adapter supports them. Saved revisions and observed execution outcomes are shared with the proposed script MCP tools.
 
-### Live data and frame selection
+Snapshots preserve measurement data; screenshots preserve pixels with actual capture frame IDs. Neither promises a game save state or deterministic replay. Their directory layout, asynchronous completion and loss semantics are defined in the workspace specification.
 
-The planned timeline initially follows live data. Selecting a frame or time range keeps that selection stable while new data arrives. A visible state distinguishes "Follow live" from "Inspect selection", with a clear action to return to the live end.
+### Stable inspection
 
-Pausing the profiler display does not automatically pause the game. Game pause would require a separate supported runtime interface. A recording must state whether it contains telemetry alone or images too. Saving a frame does not promise deterministic replay.
+The timeline initially follows live data. Selecting a frame switches to **Inspect selection** and preserves that selection while new data arrives. **Follow live** returns to the live end. Inspecting the view does not pause the game. Existing process controls and logs remain available without a telemetry connection; scripts remain editable offline.
+
+Embedded game presentation remains a separate [window-integration](game-window-integration.md) proposal. The additional [game-surface concept](../assets/design/profiler.png) illustrates that possible layout, without establishing native integration.
 
 ## Animations, artwork and profiling
 
@@ -84,4 +86,4 @@ Account for font and DPI scaling, sufficient text contrast, reduced motion, clea
 
 ## About the images
 
-Both PNGs show visual targets. They do not demonstrate implemented window integration, an existing telemetry protocol or actual measurements of the depicted game. Sources and ASTRO BOT artwork use are documented in [Image sources](../assets/design/README.md).
+The design PNGs show visual targets, with example metrics. They do not demonstrate implemented frame analysis, captures, input scripts or native window integration. The new workspace references use empty screenshot placeholders and contain no generated game artwork. Sources, prompts and ASTRO BOT artwork use in the library concept are documented in [Image sources](../assets/design/README.md).

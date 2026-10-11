@@ -39,6 +39,8 @@ While FrameRift is open, MCP clients can use `http://127.0.0.1:47653/mcp` with S
 
 For Codex, register the running app with `codex mcp add framerift --url http://127.0.0.1:47653/mcp`. The game tools use the same guarded launcher as the UI and do not require a UDP adapter.
 
+Current MCP tools list library games, start/stop the managed game, report its status, read the last five log lines by default, and expose UDP events/command state. The [profiler workspace and game-script design](docs/profiler-workspace.md) specifies the planned live dashboard, snapshots, screenshots and saved scripts; their game-side adapter and script MCP tools remain unimplemented.
+
 For local development, point the desktop menu entry at this checkout's `build/framerift`; rebuilding updates the executable used by the launcher. For packaged installations on Linux, `cmake --install build` installs the app, desktop menu entry and icon under the configured prefix. Generated code uses the user cache; saves and session logs use the shared FrameRift data directory, keyed by game ID.
 
 ## Library preview

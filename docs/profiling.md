@@ -72,14 +72,14 @@ GPU results may become available only after a later flip. The existing timing co
 
 ## Planned measurement view
 
-An initial measurement view could use existing data without requiring a full debugger:
+The proposed [profiler workspace](profiler-workspace.md) uses the following order, without requiring a full debugger:
 
 1. Game session with process status and live logs; available in the console.
-2. Import or ongoing monitoring of the timing file from a compatible library set.
-3. Flip-interval chart and statistics with explicit calculations.
-4. Details of a selected frame-timing record.
-5. Selected draw/GPU aggregates with their measurement window and source.
-6. Session export with metadata, raw data and enabled measurement options.
+2. Structured frame summaries from the later bridge adapter; timing-file import remains a separate possible source.
+3. A prominent **FPS (estimated)** card, flip-interval chart and statistics with explicit calculations.
+4. Details of a selected frame and driver/GPU tables with their actual measurement window and source.
+5. Immutable telemetry snapshots and optional asynchronous screenshots with frame/capture association.
+6. Durable per-game input scripts, optional scheduled starts and capture checkpoints, shared by UI and future MCP tools.
 
 Pausing charts should initially freeze only the FrameRift view. It does not stop the game process or GPU. Breakpoints, single-stepping, call stacks, memory inspection and shader debugging require further debugger or capture integration. A window titled "Profiler" does not provide those capabilities by itself.
 

@@ -91,7 +91,7 @@ int main() {
         std::filesystem::create_directories(directory);
         const auto demo_path = directory / "nested/demo.sqlite";
         const framerift::LaunchSettings launch_settings{
-            (directory / "Any PS5").string(), (directory / "runtime").string(), (directory / "build/relinker").string(),
+            (directory / "Any PS5").string(),
         };
         std::filesystem::create_directories(launch_settings.anyps5_directory);
         const std::vector<framerift::Game> previews{
@@ -102,11 +102,16 @@ int main() {
             framerift::Library library(demo_path.string());
             require(library.games().empty(), "A new cache should start empty");
             const auto unset = library.launch_settings();
-            require(unset.anyps5_directory.empty() && unset.runtime_directory.empty() && unset.relinker_path.empty(),
+            require(unset.anyps5_directory.empty(),
                 "A new cache should not invent launch settings");
             auto settings = launch_settings;
             settings.anyps5_directory += "/.";
+            execute(demo_path, "INSERT INTO cache_metadata (key, value) VALUES "
+                "('launch.runtime_directory', '/old/runtime'), ('launch.relinker_path', '/old/relinker')");
             library.set_launch_settings(settings);
+            require(execute(demo_path, "SELECT COUNT(*) FROM cache_metadata WHERE key IN "
+                "('launch.runtime_directory', 'launch.relinker_path')") == 0,
+                "Saving the checkout retained obsolete build overrides");
             library.cache_demo(previews);
             const auto games = library.games();
             require(games.size() == 2 && games.front().id == previews.front().id,
@@ -126,17 +131,15 @@ int main() {
             framerift::Library library(demo_path.string());
             require(library.games().size() == 2, "Cached API records disappeared on restart");
             const auto settings = library.launch_settings();
-            require(settings.anyps5_directory == launch_settings.anyps5_directory &&
-                settings.runtime_directory == launch_settings.runtime_directory && settings.relinker_path == launch_settings.relinker_path,
+            require(settings.anyps5_directory == launch_settings.anyps5_directory,
                 "Launch settings were not canonicalized or persisted");
             auto invalid_settings = settings;
-            invalid_settings.anyps5_directory = "/different";
-            invalid_settings.relinker_path = std::string("invalid\0path", 12);
+            invalid_settings.anyps5_directory = std::string("invalid\0path", 12);
             require_rejected([&] { library.set_launch_settings(invalid_settings); });
             require(library.launch_settings().anyps5_directory == settings.anyps5_directory,
                 "Rejected launch settings partially replaced saved paths");
             library.set_launch_settings({});
-            require(library.launch_settings().runtime_directory.empty(), "Launch settings could not be cleared");
+            require(library.launch_settings().anyps5_directory.empty(), "Launch settings could not be cleared");
             auto invalid = previews;
             invalid.front().cover_path.clear();
             require_rejected([&] { library.cache_demo(invalid); });

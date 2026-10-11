@@ -159,7 +159,8 @@ int main() {
     const auto directory = std::filesystem::temp_directory_path() / ("framerift session check " + std::string(id.get()));
     try {
         const auto project = directory / "Any PS5";
-        const auto runtime = directory / "Runtime";
+        const auto build = project / "build";
+        const auto runtime = build / "core/libs/libs";
         const auto originals = directory / "Original Games";
         const auto cache = directory / "Cache";
         const auto persistent = directory / "Data";
@@ -171,6 +172,28 @@ int main() {
         write(second / "sce_sys/param.json", R"({"titleId":"PPSA02222","titleName":"Fixture Two"})");
         write(runtime / "libc.prx", elf(3));
         write(runtime / "libkernel.prx", elf(3));
+        write(build / "CMakeCache.txt", "CMAKE_HOME_DIRECTORY:INTERNAL=" + project.string() + "\n");
+        write(build / "build.ninja", "build core/libs/libs: phony core/libs/libs/libc.prx core/libs/libs/libkernel.prx\n");
+        write(build / "core/libs/nid_patcher", "#!/bin/sh\nexit 99\n", true);
+        write(project / "tools/stage_guest_runtime.py", R"(import os, re
+from pathlib import Path
+def build_library_names(build):
+    manifest = build / 'build.ninja'
+    return set(re.findall(r'core/libs/libs/([^/\s]+\.prx)', manifest.read_text())) if manifest.is_file() else set()
+def select_build(project, override=None):
+    assert 'ANYPS5_BUILD_DIR' not in os.environ
+    assert override is not None
+    build = Path(override).resolve()
+    cache = build / 'CMakeCache.txt'
+    if not cache.is_file() or cache.read_text().strip() != 'CMAKE_HOME_DIRECTORY:INTERNAL=' + str(project):
+        raise RuntimeError('Not a local CMake build')
+    if not {'libc.prx', 'libkernel.prx'}.issubset(build_library_names(build)):
+        raise RuntimeError('Missing runtime manifest')
+    for name in ('core/relinker/relinker', 'core/libs/nid_patcher'):
+        if not os.access(build / name, os.X_OK):
+            raise RuntimeError('Incomplete build')
+    return build
+)");
         write(project / "tools/run_with_memory_guard.py", R"(import os, pathlib, signal, subprocess, sys
 assert sys.argv[1] == '--'
 root = pathlib.Path.cwd()
@@ -210,9 +233,9 @@ while True:
         print('large-end', flush=True)
     time.sleep(0.01)
 )");
-        write(project / "relinker", R"(#!/usr/bin/env python3
+        write(build / "core/relinker/relinker", R"(#!/usr/bin/env python3
 import os, pathlib, struct, sys, time
-root = pathlib.Path(__file__).parent
+root = pathlib.Path(__file__).parents[3]
 for index in range(8):
     print('conversion line ' + str(index).zfill(2), flush=True)
 if (root / 'slow-conversion').exists():
@@ -227,6 +250,10 @@ header[:7] = b'\x7fELF\x02\x01\x01'
 struct.pack_into('<HH', header, 16, 2, 62)
 pathlib.Path(sys.argv[-1]).write_bytes(header)
 )", true);
+        const auto timestamp = std::filesystem::file_time_type::clock::now();
+        for (const auto& entry : std::filesystem::recursive_directory_iterator(build)) {
+            if (entry.is_regular_file()) std::filesystem::last_write_time(entry.path(), timestamp);
+        }
 
         {
             framerift::Library library((directory / "library.sqlite").string());
@@ -272,7 +299,7 @@ pathlib.Path(sys.argv[-1]).write_bytes(header)
             }
             require(!std::filesystem::exists(persistent / "saves/PPSA01111/guard.pid"), "Missing runtime settings started a game process");
 
-            library.set_launch_settings({project.string(), runtime.string(), (project / "relinker").string()});
+            library.set_launch_settings({project.string()});
             write(project / "slow-conversion", "wait");
             data(call(mcp, "start_game", R"({"game_id":"PPSA01111"})"));
             wait_until([&] { return std::filesystem::exists(project / "conversion-ready"); }, "The asynchronous converter fixture did not start");

@@ -9,7 +9,6 @@
 #include <json-glib/json-glib.h>
 
 #include <algorithm>
-#include <array>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -24,17 +23,6 @@ constexpr const char* games_query =
     "SELECT id, title, subtitle, genre, cover_path, hero_path, landscape_path, last_played, is_demo, "
     "steamgriddb_id, logo_path, source_url, installation_path "
     "FROM games ORDER BY last_played DESC, title COLLATE NOCASE, id";
-
-struct LaunchField {
-    const char* key;
-    std::string LaunchSettings::* path;
-};
-
-constexpr std::array launch_fields{
-    LaunchField{"launch.anyps5_directory", &LaunchSettings::anyps5_directory},
-    LaunchField{"launch.runtime_directory", &LaunchSettings::runtime_directory},
-    LaunchField{"launch.relinker_path", &LaunchSettings::relinker_path},
-};
 
 void execute(sqlite3* database, const char* sql) {
     if (sqlite3_exec(database, sql, nullptr, nullptr, nullptr) != SQLITE_OK) {
@@ -447,32 +435,21 @@ void Library::cache_artwork(const std::vector<Game>& games) {
 }
 
 LaunchSettings Library::launch_settings() const {
-    LaunchSettings result;
-    Statement query(database_, "SELECT key, value FROM cache_metadata WHERE key LIKE 'launch.%'");
-    while (query.next()) {
-        for (const auto& field : launch_fields) {
-            if (query.text(0) == field.key) result.*field.path = query.text(1);
-        }
-    }
-    return result;
+    Statement query(database_, "SELECT value FROM cache_metadata WHERE key = 'launch.anyps5_directory'");
+    return {query.next() ? query.text(0) : std::string{}};
 }
 
 void Library::set_launch_settings(const LaunchSettings& settings) {
-    auto normalized = settings;
-    for (const auto& field : launch_fields) {
-        auto& path = normalized.*field.path;
-        if (path.find('\0') != std::string::npos) throw std::runtime_error("Launch settings contain an invalid path");
-        if (!path.empty()) path = normalized_folders({path}).front();
-    }
+    auto path = settings.anyps5_directory;
+    if (path.find('\0') != std::string::npos) throw std::runtime_error("Launch settings contain an invalid path");
+    if (!path.empty()) path = normalized_folders({path}).front();
     Transaction transaction(database_);
     Statement update(database_,
-        "INSERT INTO cache_metadata (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value");
-    for (const auto& field : launch_fields) {
-        update.bind(1, std::string(field.key));
-        update.bind(2, normalized.*field.path);
-        update.next();
-        update.reset();
-    }
+        "INSERT INTO cache_metadata (key, value) VALUES ('launch.anyps5_directory', ?) "
+        "ON CONFLICT(key) DO UPDATE SET value = excluded.value");
+    update.bind(1, path);
+    update.next();
+    execute(database_, "DELETE FROM cache_metadata WHERE key IN ('launch.runtime_directory', 'launch.relinker_path')");
     transaction.commit();
 }
 

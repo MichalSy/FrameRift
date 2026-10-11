@@ -569,8 +569,7 @@ private:
         gtk_box_append(GTK_BOX(content), label("Runtime", "section-heading"));
         const auto settings = library_.launch_settings();
         anyps5_entry_ = path_entry(content, "AnyPS5 folder", settings.anyps5_directory);
-        runtime_entry_ = path_entry(content, "Runtime libraries", settings.runtime_directory);
-        relinker_entry_ = path_entry(content, "Relinker executable", settings.relinker_path);
+        gtk_box_append(GTK_BOX(content), label("Use the latest complete build directly from this folder."));
         gtk_box_append(GTK_BOX(content), label("Artwork", "section-heading"));
         auto* artwork_row = box(GTK_ORIENTATION_HORIZONTAL, 12);
         auto* artwork_label = label("SteamGridDB API key");
@@ -653,9 +652,7 @@ private:
     void save_settings() {
         if (saving_settings_) return;
         library_.set_launch_settings(LaunchSettings{
-            gtk_editable_get_text(GTK_EDITABLE(anyps5_entry_)),
-            gtk_editable_get_text(GTK_EDITABLE(runtime_entry_)),
-            gtk_editable_get_text(GTK_EDITABLE(relinker_entry_))});
+            gtk_editable_get_text(GTK_EDITABLE(anyps5_entry_))});
         const std::string key(gtk_editable_get_text(GTK_EDITABLE(api_key_entry_)));
         if (key.empty()) {
             finish_settings();
@@ -799,8 +796,8 @@ private:
         gtk_widget_set_sensitive(play_, available && !busy);
         gtk_widget_set_sensitive(rebuild_, available && !busy);
         const auto settings = library_.launch_settings();
-        const bool configured = !settings.anyps5_directory.empty() && !settings.runtime_directory.empty() && !settings.relinker_path.empty();
-        gtk_widget_set_tooltip_text(play_, configured ? "Launch with the shared AnyPS5 runtime" : "Configure AnyPS5 and its shared runtime in Settings");
+        const bool configured = !settings.anyps5_directory.empty();
+        gtk_widget_set_tooltip_text(play_, configured ? "Launch with the latest AnyPS5 build" : "Configure the AnyPS5 folder in Settings");
         gtk_widget_set_tooltip_text(rebuild_, "Rebuild generated game code; keep saves and runtime data");
         const char* launch_label = "▶   Play";
         if (busy && !rebuilding) {
@@ -841,7 +838,7 @@ private:
         const auto* game = selected();
         if (!game || game->is_demo || game->installation_path.empty()) return;
         const auto settings = library_.launch_settings();
-        if (settings.anyps5_directory.empty() || settings.runtime_directory.empty() || settings.relinker_path.empty()) {
+        if (settings.anyps5_directory.empty()) {
             pending_action_ = PendingAction{game->id, action};
             show_game_folders();
             return;
@@ -947,8 +944,6 @@ private:
     GtkWidget* folder_list_ = nullptr;
     GtkWidget* add_folders_ = nullptr;
     GtkWidget* anyps5_entry_ = nullptr;
-    GtkWidget* runtime_entry_ = nullptr;
-    GtkWidget* relinker_entry_ = nullptr;
     GtkWidget* api_key_entry_ = nullptr;
     bool saving_settings_ = false;
     GtkWidget* play_ = nullptr;

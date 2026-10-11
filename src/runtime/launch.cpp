@@ -208,6 +208,71 @@ Process spawn_process(const std::vector<std::string>& command, const std::filesy
     return process;
 }
 
+std::filesystem::path select_build(const std::filesystem::path& project, const char* python,
+    GCancellable* cancellable) {
+    // Reuse AnyPS5's manifests and build validation without its runtime staging.
+    const char* discovery = R"(import os, sys
+from pathlib import Path
+os.environ.pop('ANYPS5_BUILD_DIR', None)
+project = Path(sys.argv[1]).resolve()
+sys.path.insert(0, str(project / 'tools'))
+try:
+    from stage_guest_runtime import build_library_names, select_build
+    builds = []
+    for candidate in project.iterdir():
+        if not candidate.is_dir():
+            continue
+        try:
+            build = select_build(project, candidate)
+            libraries = build / 'core/libs/libs'
+            patcher = build / 'core/libs/nid_patcher'
+            libc = libraries / 'unpatched/libc.prx'
+            artifacts = [build / 'core/relinker/relinker', patcher]
+            for name in build_library_names(build):
+                patched = libraries / name
+                unpatched = libraries / 'unpatched' / name
+                if not patched.is_file() or not patched.stat().st_size:
+                    raise RuntimeError('Missing patched library')
+                dependencies = [patcher]
+                if unpatched.is_file():
+                    dependencies.append(unpatched)
+                    if name != 'libc.prx':
+                        if not libc.is_file():
+                            raise RuntimeError('Missing libc export reference')
+                        dependencies.append(libc)
+                if any(path.stat().st_mtime_ns > patched.stat().st_mtime_ns for path in dependencies):
+                    raise RuntimeError('Patched library is out of date')
+                artifacts.append(patched)
+            builds.append((max(path.stat().st_mtime_ns for path in artifacts), str(build)))
+        except (RuntimeError, OSError):
+            continue
+    if not builds:
+        raise RuntimeError('Build the relinker and libs targets in the AnyPS5 checkout before starting a game; no complete, current patched build was found')
+    print(max(builds)[1])
+except Exception as error:
+    print(str(error), file=sys.stderr)
+    sys.exit(1)
+)";
+    auto discovery_process = spawn_process({python, "-B", "-c", discovery, project.string()}, project);
+    gchar* output = nullptr;
+    GError* error = nullptr;
+    if (!g_subprocess_communicate_utf8(discovery_process.get(), nullptr, cancellable, &output, nullptr, &error)) {
+        const bool cancelled = g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED);
+        const std::string message = error ? error->message : "Could not select an AnyPS5 build";
+        g_clear_error(&error);
+        g_free(output);
+        if (cancelled) stop_converter(discovery_process.get());
+        throw std::runtime_error(message);
+    }
+    const std::unique_ptr<gchar, decltype(&g_free)> captured(output, g_free);
+    const std::string result = captured ? captured.get() : "";
+    if (!g_subprocess_get_successful(discovery_process.get())) {
+        throw std::runtime_error("Could not select an AnyPS5 build: " + result);
+    }
+    if (result.empty() || result.back() != '\n') throw std::runtime_error("AnyPS5 build discovery returned no path");
+    return existing_directory(result.substr(0, result.size() - 1), "AnyPS5 build");
+}
+
 struct StagingDirectory {
     std::filesystem::path path;
     ~StagingDirectory() {
@@ -310,14 +375,15 @@ PreparedGame prepare_game(const Game& game, const LaunchSettings& settings,
     if (!std::filesystem::is_regular_file(guard) || !std::ifstream(guard)) {
         throw std::runtime_error("AnyPS5 has no readable tools/run_with_memory_guard.py; unguarded game launch is disabled");
     }
-    const auto runtime = existing_directory(settings.runtime_directory, "Runtime");
+    const std::unique_ptr<gchar, decltype(&g_free)> python(g_find_program_in_path("python3"), g_free);
+    if (!python) throw std::runtime_error("Python 3 is required to start AnyPS5 games");
+    const auto build = select_build(anyps5, python.get(), cancellable);
+    const auto runtime = existing_directory(build / "core/libs/libs", "Runtime");
     if (runtime.string().find_first_of(":$") != std::string::npos) {
         throw std::runtime_error("Runtime paths cannot contain ':' or '$'");
     }
     check_elf(runtime / "libc.prx", false);
     check_elf(runtime / "libkernel.prx", false);
-    const std::unique_ptr<gchar, decltype(&g_free)> python(g_find_program_in_path("python3"), g_free);
-    if (!python) throw std::runtime_error("Python 3 is required to start AnyPS5 games");
 
     PreparedGame prepared;
     prepared.game_id = game.id;
@@ -338,10 +404,10 @@ PreparedGame prepare_game(const Game& game, const LaunchSettings& settings,
     std::filesystem::path relinker;
     if (converting) {
         std::error_code error;
-        relinker = std::filesystem::canonical(settings.relinker_path, error);
+        relinker = std::filesystem::canonical(build / "core/relinker/relinker", error);
         if (error || !std::filesystem::is_regular_file(relinker) ||
             !g_file_test(relinker.string().c_str(), G_FILE_TEST_IS_EXECUTABLE)) {
-            throw std::runtime_error("Configure an executable AnyPS5 relinker before converting this game");
+            throw std::runtime_error("Build the AnyPS5 relinker target before converting this game");
         }
     } else {
         if (std::filesystem::is_symlink(executable)) throw std::runtime_error("The generated executable cannot be a symbolic link");

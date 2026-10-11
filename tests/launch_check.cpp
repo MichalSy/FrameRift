@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <fstream>
 #include <iostream>
 #include <memory>
@@ -41,6 +42,50 @@ std::string elf(unsigned char type) {
     return {header.data(), header.size()};
 }
 
+void write_selector(const std::filesystem::path& project) {
+    write(project / "tools/stage_guest_runtime.py", R"(import os, re
+from pathlib import Path
+def build_library_names(build):
+    manifest = build / 'build.ninja'
+    return set(re.findall(r'core/libs/libs/([^/\s]+\.prx)', manifest.read_text())) if manifest.is_file() else set()
+def select_build(project, override=None):
+    assert 'ANYPS5_BUILD_DIR' not in os.environ
+    assert override is not None
+    build = Path(override).resolve()
+    cache = build / 'CMakeCache.txt'
+    if not cache.is_file() or cache.read_text().strip() != 'CMAKE_HOME_DIRECTORY:INTERNAL=' + str(project):
+        raise RuntimeError('Not a local CMake build')
+    if not {'libc.prx', 'libkernel.prx'}.issubset(build_library_names(build)):
+        raise RuntimeError('Missing runtime manifest')
+    for name in ('core/relinker/relinker', 'core/libs/nid_patcher'):
+        if not os.access(build / name, os.X_OK):
+            raise RuntimeError('Incomplete build')
+    return build
+)");
+}
+
+void write_build(const std::filesystem::path& project, const std::filesystem::path& build,
+    const std::string& converter, std::filesystem::file_time_type timestamp) {
+    write(build / "CMakeCache.txt", "CMAKE_HOME_DIRECTORY:INTERNAL=" + project.string() + "\n");
+    write(build / "build.ninja", "build core/libs/libs: phony core/libs/libs/libc.prx "
+        "core/libs/libs/libkernel.prx core/libs/libs/libTest.prx\n");
+    write(build / "core/relinker/relinker", converter, true);
+    write(build / "core/libs/nid_patcher", "#!/bin/sh\nexit 99\n", true);
+    for (const auto* name : {"libc.prx", "libkernel.prx", "libTest.prx"}) {
+        write(build / "core/libs/libs" / name, elf(3));
+        write(build / "core/libs/libs/unpatched" / name, elf(3));
+    }
+    for (const auto& entry : std::filesystem::recursive_directory_iterator(build)) {
+        if (entry.is_regular_file()) std::filesystem::last_write_time(entry.path(), timestamp);
+    }
+}
+
+std::string runtime_argument(const framerift::PreparedGame& prepared) {
+    const auto argument = std::find(prepared.command.begin(), prepared.command.end(), "--runtime");
+    require(argument != prepared.command.end() && argument + 1 != prepared.command.end(), "Missing direct runtime argument");
+    return *(argument + 1);
+}
+
 template <typename Action>
 void rejected(Action action) {
     try {
@@ -73,14 +118,14 @@ int main() {
     const auto directory = std::filesystem::temp_directory_path() / ("framerift launch " + std::string(id.get()));
     try {
         const auto project = directory / "Any PS5";
-        const auto runtime = directory / "Native Runtime";
+        const auto build = project / "build";
+        const auto runtime = build / "core/libs/libs";
         const auto original = directory / "Original Game";
         const auto cache = directory / "Cache Root";
         const auto data = directory / "Data Root";
         write(original / "eboot.bin", "Original SELF data");
         write(original / "media/asset.bin", "Original resource");
-        write(runtime / "libc.prx", elf(3));
-        write(runtime / "libkernel.prx", elf(3));
+        write_selector(project);
         const auto guard = project / "tools/run_with_memory_guard.py";
         write(guard, R"(import os, pathlib, sys
 assert 'STEAMGRIDDB_API_KEY' not in os.environ
@@ -141,11 +186,12 @@ while not pathlib.Path(args.workdir, 'output-ready').exists():
 os.write(1, b'T' * 130000 + b'\nfinished\n')
 sys.exit(7)
 )");
-        const auto relinker = project / "relinker";
+        const auto relinker = build / "core/relinker/relinker";
         write(relinker, R"(#!/usr/bin/env python3
 import os, pathlib, struct, sys
 assert 'STEAMGRIDDB_API_KEY' not in os.environ
-root = pathlib.Path(__file__).parent
+root = pathlib.Path(__file__).parents[3]
+(root / 'last-relinker').write_text(str(pathlib.Path(__file__)))
 with (root / 'conversion-count').open('a') as count:
     count.write('converted\n')
 conversion = (root / 'conversion-count').read_text().count('converted\n')
@@ -166,12 +212,15 @@ print('converter stderr', file=sys.stderr)
 if (root / 'fail-conversion').exists():
     sys.exit(19)
 )", true);
+        const auto converter = read(relinker);
+        const auto timestamp = std::filesystem::file_time_type::clock::now() - std::chrono::hours(2);
+        write_build(project, build, converter, timestamp);
         framerift::Game game;
         game.id = "PPSA01234";
         game.title = "Metadata Title";
         game.installation_path = original.string();
         game.is_demo = false;
-        const framerift::LaunchSettings settings{project.string(), runtime.string(), relinker.string()};
+        const framerift::LaunchSettings settings{project.string()};
         const auto code = cache / "games/PPSA01234";
         const auto work = data / "saves/PPSA01234";
         const std::array legacy{std::filesystem::path("_sd/legacy.bin"), std::filesystem::path("_sd_mem/u2/slot0.bin"),
@@ -181,6 +230,8 @@ if (root / 'fail-conversion').exists():
         write(code / "anyps5-fonts/font.ttf", "Executable-relative font");
         write(code / "anyps5-entitlements.ini", "Executable-relative entitlements");
         const auto prepared = framerift::prepare_game(game, settings, cache, data);
+        require(runtime_argument(prepared) == runtime.string() && read(project / "last-relinker") == relinker.string(),
+            "Conversion and launching must use the same complete build directly");
         require(prepared.game_id == game.id && prepared.code_directory == code && prepared.working_directory == work,
             "Generated code and persistent working data must use separate directories with a stable game ID");
         for (const auto& path : legacy) {
@@ -278,14 +329,15 @@ if (root / 'fail-conversion').exists():
             read(runtime / "libc.prx") == elf(3) && read(runtime / "libkernel.prx") == elf(3),
             "Rebuild must preserve old logs and the shared runtime without launching a game");
         const auto rebuilt_executable = read(code / "game.elf");
-        auto missing_relinker = settings;
-        missing_relinker.relinker_path = (project / "missing-relinker").string();
-        rejected([&] { framerift::prepare_game(game, missing_relinker, cache, data, true); });
+        std::filesystem::rename(relinker, relinker.string() + ".disabled");
+        rejected([&] { framerift::prepare_game(game, settings, cache, data, true); });
         require(read(code / "game.elf") == rebuilt_executable &&
             read(code / "app0/sce_module/test.prx.guest.prx") == "Generated module 2",
             "Invalid rebuild configuration changed the existing generated code");
-        framerift::prepare_game(game, missing_relinker, cache, data);
-        require(read(project / "conversion-count") == "converted\nconverted\n", "A cached launch unexpectedly required a relinker");
+        rejected([&] { framerift::prepare_game(game, settings, cache, data); });
+        require(read(project / "conversion-count") == "converted\nconverted\n",
+            "An incomplete build must not trigger conversion or change cached code");
+        std::filesystem::rename(relinker.string() + ".disabled", relinker);
         write(code / "_sd/conflict.bin", "Legacy conflict");
         write(code / "unmigrated.json", "Unmigrated data");
         rejected([&] { framerift::prepare_game(game, settings, cache, data, true); });
@@ -439,6 +491,51 @@ if (root / 'fail-conversion').exists():
                 throw;
             }
         }
+        const auto latest_build = project / "build latest ü";
+        const auto latest_runtime = latest_build / "core/libs/libs";
+        const auto latest_timestamp = timestamp + std::chrono::minutes(10);
+        write_build(project, latest_build, converter, latest_timestamp);
+        const auto incomplete_build = project / "build-incomplete";
+        write_build(project, incomplete_build, converter, latest_timestamp + std::chrono::minutes(10));
+        std::filesystem::remove(incomplete_build / "core/libs/libs/libTest.prx");
+        const auto stale_build = project / "build-stale";
+        write_build(project, stale_build, converter, latest_timestamp + std::chrono::minutes(20));
+        std::filesystem::last_write_time(stale_build / "core/libs/libs/unpatched/libTest.prx",
+            latest_timestamp + std::chrono::minutes(21));
+        const auto tool_build = project / "build-relinker";
+        write(tool_build / "CMakeCache.txt", "CMAKE_HOME_DIRECTORY:INTERNAL=" + project.string() + "\n");
+        write(tool_build / "core/relinker/relinker", converter, true);
+        const auto old_executable = read(code / "game.elf");
+        const auto old_count = read(project / "conversion-count");
+        const auto* inherited_build = g_getenv("ANYPS5_BUILD_DIR");
+        const std::string previous_build = inherited_build ? inherited_build : "";
+        const bool had_build = inherited_build != nullptr;
+        g_setenv("ANYPS5_BUILD_DIR", incomplete_build.string().c_str(), true);
+        const auto current = framerift::prepare_game(game, settings, cache, data);
+        if (had_build) g_setenv("ANYPS5_BUILD_DIR", previous_build.c_str(), true);
+        else g_unsetenv("ANYPS5_BUILD_DIR");
+        require(runtime_argument(current) == latest_runtime.string() && read(code / "game.elf") == old_executable &&
+            read(project / "conversion-count") == old_count,
+            "The newest complete patched build must be selected without reconverting cached game code or honoring inherited overrides");
+        // A newer patcher or libc reference also makes a patched runtime incomplete.
+        std::filesystem::last_write_time(stale_build / "core/libs/libs/unpatched/libTest.prx",
+            latest_timestamp + std::chrono::minutes(20));
+        std::filesystem::last_write_time(stale_build / "core/libs/nid_patcher", latest_timestamp + std::chrono::minutes(22));
+        require(runtime_argument(framerift::prepare_game(game, settings, cache, data)) == latest_runtime.string(),
+            "A build with patched libraries older than its patcher must not be selected");
+        std::filesystem::last_write_time(stale_build / "core/libs/nid_patcher", latest_timestamp + std::chrono::minutes(20));
+        std::filesystem::last_write_time(stale_build / "core/libs/libs/unpatched/libc.prx",
+            latest_timestamp + std::chrono::minutes(23));
+        std::filesystem::last_write_time(stale_build / "core/libs/libs/libc.prx", latest_timestamp + std::chrono::minutes(23));
+        require(runtime_argument(framerift::prepare_game(game, settings, cache, data)) == latest_runtime.string(),
+            "Other patched libraries must be current against the libc export reference");
+        std::filesystem::remove(project / "fail-conversion");
+        framerift::prepare_game(game, settings, cache, data, true);
+        require(read(project / "last-relinker") == (latest_build / "core/relinker/relinker").string() &&
+            read(runtime / "libc.prx") == elf(3) && read(latest_runtime / "libc.prx") == elf(3) &&
+            !std::filesystem::exists(code / "libc.prx") && !std::filesystem::exists(code / "libs") &&
+            !std::filesystem::exists(project / "tools/__pycache__"),
+            "Explicit rebuild must use the latest relinker directly without copying or modifying runtime libraries");
         g_unsetenv("FRAMERIFT_LAUNCH_CHECK");
         if (had_key) g_setenv("STEAMGRIDDB_API_KEY", previous_key.c_str(), true);
         else g_unsetenv("STEAMGRIDDB_API_KEY");

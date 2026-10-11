@@ -251,8 +251,8 @@ void GameSession::start(const std::string& game_id, bool rebuild) {
     if (game == games.end()) throw std::runtime_error("Unknown game ID in the configured library");
     if (!available(*game)) throw std::runtime_error("The selected game has no available local installation");
     const auto settings = impl_->library.launch_settings();
-    if (settings.anyps5_directory.empty() || settings.runtime_directory.empty())
-        throw std::runtime_error("Configure the AnyPS5 project and runtime directories before starting a game");
+    if (settings.anyps5_directory.empty())
+        throw std::runtime_error("Configure the AnyPS5 checkout before starting a game");
     auto request = std::make_unique<Impl::Request>(Impl::Request{*game, settings, impl_->cache, impl_->data, rebuild});
     impl_->state = {};
     impl_->state.state = "preparing";

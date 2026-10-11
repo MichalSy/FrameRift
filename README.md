@@ -33,13 +33,13 @@ ctest --test-dir build --output-on-failure
 ./build/framerift
 ```
 
-In **Settings**, add game folders and configure the modified AnyPS5 checkout, compatible runtime libraries and relinker executable. Save a SteamGridDB API key there to load artwork; `STEAMGRIDDB_API_KEY` overrides the saved key. Cached artwork works offline.
+In **Settings**, add game folders and select the modified AnyPS5 checkout. Each launch or rebuild uses its newest complete local CMake build: the relinker and patched runtime libraries are used directly, without copying them. Save a SteamGridDB API key there to load artwork; `STEAMGRIDDB_API_KEY` overrides the saved key. Cached artwork works offline.
 
 While FrameRift is open, MCP clients can use `http://127.0.0.1:47653/mcp` with Streamable HTTP. The Profiler displays both server addresses and the actual UDP connection state. See [Debug bridge and MCP](docs/debug-bridge.md) for configuration, tools and the runtime wire protocol.
 
 For Codex, register the running app with `codex mcp add framerift --url http://127.0.0.1:47653/mcp`. The game tools use the same guarded launcher as the UI and do not require a UDP adapter.
 
-On Linux, `cmake --install build` installs the app, desktop menu entry and icon under the configured prefix. Generated code uses the user cache; saves and session logs use the shared FrameRift data directory, keyed by game ID.
+For local development, point the desktop menu entry at this checkout's `build/framerift`; rebuilding updates the executable used by the launcher. For packaged installations on Linux, `cmake --install build` installs the app, desktop menu entry and icon under the configured prefix. Generated code uses the user cache; saves and session logs use the shared FrameRift data directory, keyed by game ID.
 
 ## Library preview
 

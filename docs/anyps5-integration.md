@@ -23,7 +23,7 @@ The integration involves three components:
 | --- | --- | --- |
 | Relinker | Converts a clean ELF and bundled game modules | Convert missing generated code and support explicit rebuilds. Broader input/option management remains planned. |
 | Converted game | Runs as a Linux ELF or Windows EXE | Start it as a separate Linux process and observe its state. Windows launch remains unverified. |
-| AnyPS5 system libraries | Loaded by the operating system into the game process | Use an explicitly configured compatible library set. Richer provenance/version tracking remains planned. |
+| AnyPS5 system libraries | Loaded by the operating system into the game process | Use the patched libraries directly from the newest complete local build of the selected checkout. Richer provenance/version tracking remains planned. |
 
 The pinned AnyPS5 documentation requires a clean ELF input. This must not be interpreted as support for arbitrary PS5 packages, SELF containers or their extraction. The relinker converts the inputs it supports; a broader import pipeline would be a separate effort. The launcher passes the original `eboot.bin` to the configured modified relinker, without establishing general package or extraction support. Source: [Relinker usage](https://github.com/boykopovar/AnyPS5/blob/197ffac97203d715a258a28b432fa2eedbf8be6f/docs/user/USAGE.md#input-and-conversion).
 
@@ -70,6 +70,8 @@ Game/
 `sce_sys/param.json` and `icon0.png` are resources read by the code; import must check whether they exist. AnyPS5 also permits bundled-module directories named `sce_modules/` or `prx/`. `libs/` contains AnyPS5 system libraries rather than unchanged PS5 modules. A different library search path can be selected during conversion with `--rpath`. AnyPS5 describes game resources as copied separately into `app0/`. Sources: [Runtime layout](https://github.com/boykopovar/AnyPS5/blob/197ffac97203d715a258a28b432fa2eedbf8be6f/docs/user/USAGE.md#runtime-layout), [Metadata paths in code](https://github.com/boykopovar/AnyPS5/blob/197ffac97203d715a258a28b432fa2eedbf8be6f/core/libs/prx/libkernel/AppMetadata/src/AppMetadata.cpp#L24).
 
 The integration uses the fork's [`tools/run_game.py`](https://github.com/MichalSy/AnyPS5/blob/f36da63a8cac9ac8b3bdcad1dd27756850df90cc/tools/run_game.py) with explicit original-game, generated-executable, persistent working-directory and shared-runtime paths. It preserves original resources at their installation path and caches generated code under `framerift/games/<game-id>/`.
+
+Settings selects only the modified AnyPS5 checkout. Before each launch or rebuild, FrameRift discovers its newest complete local CMake build using the fork's build-manifest helpers. The build must contain an executable relinker and patcher plus every manifest-listed patched PRX library, current against its patching inputs. Relinker-only, incomplete and stale patched builds are skipped; the selected relinker and libraries are used in place. No runtime libraries or launcher executables are copied. Cached game code is reused until an explicit rebuild or a missing executable requires conversion.
 
 Each game has a distinct persistent working directory under the shared data root, separate from the code cache. AnyPS5 resolves its relative save/runtime paths there. Its optional `frame-timing.log` is also relative to that directory; timing import remains planned. FrameRift captures stdout/stderr in a separate session log.
 

@@ -36,8 +36,6 @@ struct ScanResult {
 
 struct LaunchSettings {
     std::string anyps5_directory;
-    std::string runtime_directory;
-    std::string relinker_path;
 };
 
 ScanResult scan_game_folders(const std::vector<std::string>& folders);

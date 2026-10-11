@@ -4,6 +4,7 @@
 // Additional attribution terms: see NOTICE in the repository root.
 
 #include "profiler.hpp"
+#include "components.hpp"
 
 #include <vte/vte.h>
 
@@ -18,12 +19,8 @@
 namespace framerift {
 namespace {
 
-GtkWidget* label(const char* text, const char* style) {
-    auto* widget = gtk_label_new(text);
-    gtk_label_set_xalign(GTK_LABEL(widget), 0);
-    gtk_widget_add_css_class(widget, style);
-    return widget;
-}
+using ui::label;
+using ui::panel;
 
 void show_error(GtkWidget* widget, const char* message) noexcept {
     g_printerr("FrameRift: %s\n", message);
@@ -48,12 +45,6 @@ std::string bytes(long double value) {
     return number(static_cast<double>(value), unit ? 2 : 0) + " " + units[unit];
 }
 
-GtkWidget* panel() {
-    auto* widget = gtk_box_new(GTK_ORIENTATION_VERTICAL, 16);
-    gtk_widget_add_css_class(widget, "monitor-panel");
-    return widget;
-}
-
 void chart_text(cairo_t* context, double x, double y, const std::string& text, bool right = false) {
     cairo_text_extents_t extent;
     cairo_text_extents(context, text.c_str(), &extent);
@@ -63,7 +54,7 @@ void chart_text(cairo_t* context, double x, double y, const std::string& text, b
 
 constexpr double chart_left = 54;
 constexpr double chart_right = 22;
-constexpr double chart_top = 24;
+constexpr double chart_header_gap = 16;
 constexpr double chart_bottom = 40;
 
 std::optional<double> chart_value(const MonitoringSnapshot& snapshot, std::size_t index, bool fps) {
@@ -168,16 +159,9 @@ ProfilerView::ProfilerView(std::function<void(bool)> request_monitoring)
     gtk_widget_set_hexpand(metric_values, true);
     const char* card_titles[] = {"FPS (estimated)", "Mean flip interval", "P95", "Worst"};
     for (std::size_t i = 0; i < metrics_.size(); ++i) {
-        auto* card = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
-        gtk_widget_add_css_class(card, "metric-card");
-        gtk_widget_set_hexpand(card, true);
-        gtk_box_append(GTK_BOX(card), label(card_titles[i], "metric-label"));
-        metrics_[i] = label("–", "metric-value");
-        gtk_label_set_xalign(GTK_LABEL(metrics_[i]), 1);
-        gtk_label_set_ellipsize(GTK_LABEL(metrics_[i]), PANGO_ELLIPSIZE_END);
-        if (!i) gtk_widget_add_css_class(metrics_[i], "metric-primary");
-        gtk_box_append(GTK_BOX(card), metrics_[i]);
-        gtk_box_append(GTK_BOX(metric_values), card);
+        const auto card = ui::metric_card(card_titles[i], i == 0);
+        metrics_[i] = card.value;
+        gtk_box_append(GTK_BOX(metric_values), card.root);
     }
     gtk_box_append(GTK_BOX(cards), metric_values);
     auto* summary = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
@@ -201,21 +185,29 @@ ProfilerView::ProfilerView(std::function<void(bool)> request_monitoring)
     auto* chart_title = label("Frame pacing", "monitor-heading");
     gtk_widget_set_hexpand(chart_title, true);
     gtk_box_append(GTK_BOX(chart_header), chart_title);
-    auto* modes = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
-    gtk_widget_add_css_class(modes, "linked");
-    chart_fps_button_ = gtk_toggle_button_new_with_label("FPS");
-    auto* fps = chart_fps_button_;
-    auto* intervals = gtk_toggle_button_new_with_label("Flip interval");
-    gtk_toggle_button_set_group(GTK_TOGGLE_BUTTON(intervals), GTK_TOGGLE_BUTTON(fps));
-    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(fps), true);
-    g_signal_connect(fps, "toggled", G_CALLBACK(+[](GtkToggleButton* button, gpointer data) {
+    frame_identity_ = label("Frame –", "frame-value");
+    frame_interval_ = label("Flip interval –", "frame-value");
+    for (auto* field : {frame_identity_, frame_interval_}) {
+        gtk_label_set_ellipsize(GTK_LABEL(field), PANGO_ELLIPSIZE_END);
+        gtk_box_append(GTK_BOX(chart_header), field);
+    }
+    const char* selections[] = {"Latest received frame", "Worst in last 1 s", nullptr};
+    frame_selector_ = gtk_drop_down_new_from_strings(selections);
+    g_signal_connect(frame_selector_, "notify::selected", G_CALLBACK(+[](GObject*, GParamSpec*, gpointer data) {
         auto& self = *static_cast<ProfilerView*>(data);
-        self.chart_fps_ = gtk_toggle_button_get_active(button);
+        try { self.inspected_.reset(); self.update_frame_detail(); gtk_widget_queue_draw(self.chart_); }
+        catch (const std::exception& error) { show_error(self.root_, error.what()); }
+        catch (...) { show_error(self.root_, "Could not select a frame"); }
+    }), this);
+    gtk_box_append(GTK_BOX(chart_header), frame_selector_);
+    chart_mode_toggle_ = ui::mode_toggle("FPS", "Flip interval");
+    gtk_widget_set_tooltip_text(chart_mode_toggle_, "Switch between FPS and flip intervals");
+    g_signal_connect(chart_mode_toggle_, "toggled", G_CALLBACK(+[](GtkToggleButton* button, gpointer data) {
+        auto& self = *static_cast<ProfilerView*>(data);
+        self.chart_fps_ = !gtk_toggle_button_get_active(button);
         gtk_widget_queue_draw(self.chart_);
     }), this);
-    gtk_box_append(GTK_BOX(modes), fps);
-    gtk_box_append(GTK_BOX(modes), intervals);
-    gtk_box_append(GTK_BOX(chart_header), modes);
+    gtk_box_append(GTK_BOX(chart_header), chart_mode_toggle_);
     follow_live_ = gtk_check_button_new_with_label("Follow live");
     gtk_check_button_set_active(GTK_CHECK_BUTTON(follow_live_), true);
     g_signal_connect(follow_live_, "toggled", G_CALLBACK(+[](GtkCheckButton* button, gpointer data) {
@@ -230,9 +222,10 @@ ProfilerView::ProfilerView(std::function<void(bool)> request_monitoring)
         catch (...) { show_error(self.root_, "Could not follow live frames"); }
     }), this);
     gtk_box_append(GTK_BOX(chart_header), follow_live_);
-    gtk_box_append(GTK_BOX(chart_panel), chart_header);
+    chart_header_ = chart_header;
+    gtk_widget_add_css_class(chart_header, "chart-header-overlay");
     chart_ = gtk_drawing_area_new();
-    gtk_drawing_area_set_content_height(GTK_DRAWING_AREA(chart_), 200);
+    gtk_drawing_area_set_content_height(GTK_DRAWING_AREA(chart_), 240);
     gtk_widget_set_hexpand(chart_, true);
     gtk_widget_set_tooltip_text(chart_, "FPS counts completed flips in the preceding source second. Click a sample to inspect. Missing samples are not interpolated.");
     gtk_drawing_area_set_draw_func(GTK_DRAWING_AREA(chart_), +[](GtkDrawingArea*, cairo_t* context, int width, int height, gpointer data) {
@@ -246,29 +239,7 @@ ProfilerView::ProfilerView(std::function<void(bool)> request_monitoring)
         catch (...) { show_error(self.root_, "Could not inspect a chart sample"); }
     }), this);
     gtk_widget_add_controller(chart_, GTK_EVENT_CONTROLLER(chart_click_));
-    gtk_box_append(GTK_BOX(chart_panel), chart_);
-    auto* detail = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 16);
-    gtk_widget_add_css_class(detail, "frame-inspection");
-    frame_identity_ = label("Frame –", "frame-value");
-    frame_interval_ = label("Flip interval –", "frame-value");
-    frame_stream_ = label("Output – / generation –", "frame-value");
-    for (auto* field : {frame_identity_, frame_interval_, frame_stream_}) {
-        gtk_box_append(GTK_BOX(detail), field);
-        gtk_box_append(GTK_BOX(detail), gtk_separator_new(GTK_ORIENTATION_VERTICAL));
-    }
-    auto* detail_spacer = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
-    gtk_widget_set_hexpand(detail_spacer, true);
-    gtk_box_append(GTK_BOX(detail), detail_spacer);
-    const char* selections[] = {"Latest received frame", "Worst in last 1 s", nullptr};
-    frame_selector_ = gtk_drop_down_new_from_strings(selections);
-    g_signal_connect(frame_selector_, "notify::selected", G_CALLBACK(+[](GObject*, GParamSpec*, gpointer data) {
-        auto& self = *static_cast<ProfilerView*>(data);
-        try { self.inspected_.reset(); self.update_frame_detail(); gtk_widget_queue_draw(self.chart_); }
-        catch (const std::exception& error) { show_error(self.root_, error.what()); }
-        catch (...) { show_error(self.root_, "Could not select a frame"); }
-    }), this);
-    gtk_box_append(GTK_BOX(detail), frame_selector_);
-    gtk_box_append(GTK_BOX(chart_panel), detail);
+    gtk_box_append(GTK_BOX(chart_panel), ui::header_overlay(chart_, chart_header));
     gtk_box_append(GTK_BOX(live), chart_panel);
 
     auto* lower = gtk_flow_box_new();
@@ -536,7 +507,7 @@ ProfilerView::ProfilerView(std::function<void(bool)> request_monitoring)
 ProfilerView::~ProfilerView() {
     g_signal_handlers_disconnect_by_data(monitoring_toggle_, this);
     g_signal_handlers_disconnect_by_data(frame_selector_, this);
-    g_signal_handlers_disconnect_by_data(chart_fps_button_, this);
+    g_signal_handlers_disconnect_by_data(chart_mode_toggle_, this);
     g_signal_handlers_disconnect_by_data(follow_live_, this);
     g_signal_handlers_disconnect_by_data(chart_click_, this);
     gtk_drawing_area_set_draw_func(GTK_DRAWING_AREA(chart_), nullptr, nullptr, nullptr);
@@ -764,7 +735,6 @@ void ProfilerView::update_frame_detail() {
     const auto interval = sample && sample->flip_interval_us ? "Flip interval " + number(*sample->flip_interval_us / 1000.0, 2) + " ms" : "Flip interval –";
     gtk_label_set_text(GTK_LABEL(frame_identity_), frame.c_str());
     gtk_label_set_text(GTK_LABEL(consumer_frame_), frame.c_str());
-    gtk_label_set_text(GTK_LABEL(frame_stream_), stream.c_str());
     gtk_label_set_text(GTK_LABEL(frame_interval_), interval.c_str());
     std::string scope = "No frame selected";
     if (sample) {
@@ -775,12 +745,15 @@ void ProfilerView::update_frame_detail() {
         else if (sample->missing_before) scope += " · " + std::to_string(sample->missing_before) + " samples missing before this frame";
         if (monitoring_.stale || !monitoring_.enabled || !monitoring_.connected) scope += " · retained data";
     }
+    scope += "\n" + stream;
     gtk_widget_set_tooltip_text(frame_identity_, scope.c_str());
+    gtk_widget_set_tooltip_text(frame_interval_, interval.c_str());
 }
 
 void ProfilerView::inspect_chart(double x, double y) {
     const auto width = gtk_widget_get_width(chart_);
     const auto height = gtk_widget_get_height(chart_);
+    const double chart_top = gtk_widget_get_height(chart_header_) + chart_header_gap;
     const double plot_width = width - chart_left - chart_right;
     const double plot_height = height - chart_top - chart_bottom;
     if (monitoring_.samples.empty() || plot_width <= 0 || plot_height <= 0 || x < chart_left ||
@@ -807,6 +780,7 @@ void ProfilerView::inspect_chart(double x, double y) {
 
 void ProfilerView::draw_chart(cairo_t* context, int width, int height) noexcept {
     try {
+        const double chart_top = gtk_widget_get_height(chart_header_) + chart_header_gap;
         const double plot_width = width - chart_left - chart_right;
         const double plot_height = height - chart_top - chart_bottom;
         if (plot_width <= 0 || plot_height <= 0) return;
@@ -824,7 +798,7 @@ void ProfilerView::draw_chart(cairo_t* context, int width, int height) noexcept 
             cairo_set_source_rgb(context, 0.56, 0.68, 0.76);
             chart_text(context, chart_left - 10, y + 4, number(maximum * (1 - static_cast<double>(tick) / ticks), 0), true);
         }
-        chart_text(context, 10, 12, chart_fps_ ? "FPS" : "ms");
+        chart_text(context, 10, chart_top - 8, chart_fps_ ? "FPS" : "ms");
         for (unsigned tick = 0; tick <= 6; ++tick) {
             const double x = chart_left + plot_width * tick / 6.0;
             cairo_set_source_rgb(context, 0.12, 0.21, 0.28);

@@ -232,6 +232,30 @@ void near(const std::optional<double>& value, double expected, const char* failu
     require(value && std::abs(*value - expected) < 0.000001, failure);
 }
 
+void check_automatic_monitoring() {
+    framerift::BridgeServer bridge(0);
+    Runtime runtime(bridge.port());
+    bridge.expect_session("bridge-check-session", "PPSA01234", true);
+    runtime.send(packet(1, "hello", R"(,"game_id":"PPSA01234","capabilities":["set_monitoring"],"monitoring":{"enabled":false,"epoch":0})"));
+    const Json command(runtime.receive());
+    require(member(command.object(), "name") == "set_monitoring" &&
+        json_object_get_boolean_member(json_object_get_object_member(command.object(), "args"), "enabled"),
+        "Game startup did not automatically request monitoring");
+    const auto id = member(command.object(), "command_id");
+    require(bridge.monitoring_snapshot().pending && !bridge.monitoring_snapshot().enabled,
+        "Automatic monitoring was treated as confirmed before runtime receipt");
+    runtime.send(packet(2, "command_completed", ",\"command_id\":\"" + id + R"(","result":{"enabled":true,"epoch":1})"));
+    wait_until([&] { return bridge.monitoring_snapshot().enabled; }, "Automatic monitoring was not confirmed");
+    const Json disabled(bridge.send_command("set_monitoring", "{\"enabled\":false}"));
+    const auto disabled_id = member(disabled.object(), "command_id");
+    runtime.receive();
+    runtime.send(packet(3, "command_completed", ",\"command_id\":\"" + disabled_id + R"(","result":{"enabled":false,"epoch":2})"));
+    runtime.send(packet(4, "hello", R"(,"game_id":"PPSA01234","capabilities":["set_monitoring"],"monitoring":{"enabled":false,"epoch":2})"));
+    wait_until([&] { return !bridge.monitoring_snapshot().pending && !bridge.monitoring_snapshot().enabled; },
+        "Manual monitoring disable was overridden by automatic startup");
+    require(bridge.monitoring_snapshot().command_id == disabled_id, "Repeated hello re-enabled monitoring");
+}
+
 void check_monitoring() {
     framerift::BridgeServer bridge(0);
     Runtime runtime(bridge.port());
@@ -799,6 +823,7 @@ int main() {
         wait_until([&] { return !bridge.status().connected; }, "A silent runtime did not expire its connection", std::chrono::seconds(7));
         require(!bridge.status().error.empty(), "Runtime heartbeat expiry was not reported");
         bridge.end_session("ring-check-session");
+        check_automatic_monitoring();
         check_monitoring();
         check_resources();
         check_work_activity();

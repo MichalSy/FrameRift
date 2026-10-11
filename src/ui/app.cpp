@@ -3,6 +3,7 @@
 // Original project: https://github.com/MichalSy/FrameRift
 // Additional attribution terms: see NOTICE in the repository root.
 
+#include "components.hpp"
 #include "library/library.hpp"
 #include "library/steamgriddb.hpp"
 #include "runtime/launch.hpp"
@@ -27,12 +28,7 @@
 namespace framerift {
 namespace {
 
-GtkWidget* label(const char* text, const char* style = nullptr) {
-    auto* widget = gtk_label_new(text);
-    gtk_label_set_xalign(GTK_LABEL(widget), 0);
-    if (style) gtk_widget_add_css_class(widget, style);
-    return widget;
-}
+using ui::label;
 
 GtkWidget* box(GtkOrientation orientation, int spacing = 0) {
     return gtk_box_new(orientation, spacing);

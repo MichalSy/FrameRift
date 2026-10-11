@@ -163,7 +163,7 @@ public:
     BridgeServer& operator=(const BridgeServer&) = delete;
 
     std::uint16_t port() const;
-    void expect_session(const std::string& session_id, const std::string& game_id);
+    void expect_session(const std::string& session_id, const std::string& game_id, bool enable_monitoring = false);
     void end_session(const std::string& session_id);
     BridgeStatus status() const;
     std::string status_json() const;

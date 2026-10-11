@@ -7,13 +7,19 @@ Additional attribution terms: see NOTICE in the repository root.
 
 # Native profiler visual review
 
-Reference: [profiler-live-v6](../assets/design/profiler-live-v6.png). The native workspace retains its layout, with the requested lighter navy palette, restrained rounding and more generous spacing. The application owns the shared Library-style header; connection status sits beside Profiler, and Library search/refresh are hidden on the Profiler page. The Live content scrolls instead of compressing resource cards. The scrollbar uses a reserved lane at the right page edge, outside card padding, with overlay scrolling disabled. Screenshots show real bridge observations, not example telemetry; consumer timing has no source yet and intentionally shows `–` and empty bars.
+Reference: [profiler-live-v6](../assets/design/profiler-live-v6.png). The native workspace retains its layout, with the Library background and darker navy cards, restrained rounding and more generous spacing. The application owns the shared Library-style header; connection status sits beside Profiler, and Library search/refresh are hidden on the Profiler page. The Live content scrolls instead of compressing resource cards. The scrollbar uses a reserved lane at the right page edge, outside card padding, with overlay scrolling disabled. The earlier live screenshots below show real bridge observations, not example telemetry; consumer timing has no source yet and intentionally shows `–` and empty bars.
 
 ![Native FPS dashboard](../assets/screenshots/profiler-live.png)
 
 ![Native flip-interval dashboard](../assets/screenshots/profiler-flip-intervals.png)
 
 ![Scrolled shader and memory cards](../assets/screenshots/profiler-resources.png)
+
+## Compact native preview
+
+The current layout was checked in an isolated GTK window using the actual ProfilerView and default unavailable values. The primary app and game were not restarted. Frame details and selection now occupy the chart header overlay, the FPS/Flip interval control is a single toggle, and the overview values are smaller. The screenshots above belong to the previous live build.
+
+![Compact native preview with unavailable values](../assets/screenshots/profiler-compact-preview.png)
 
 ## Visual direction
 

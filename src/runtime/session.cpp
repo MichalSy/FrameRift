@@ -184,7 +184,7 @@ struct GameSession::Impl : std::enable_shared_from_this<GameSession::Impl> {
             }
             BridgeLaunch configuration;
             if (bridge) {
-                bridge->expect_session(state.session_id, state.game_id);
+                bridge->expect_session(state.session_id, state.game_id, true);
                 configuration = {bridge->port(), state.session_id};
             }
             const auto owner = shared_from_this();

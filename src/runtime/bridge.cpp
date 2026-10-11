@@ -292,6 +292,7 @@ struct BridgeServer::Impl {
     std::uint64_t incoming_sequence = 0;
     bool sequence_initialized = false;
     Clock::time_point last_packet;
+    bool automatic_monitoring = false;
     bool monitoring_known = false;
     bool monitoring_enabled = false;
     std::uint64_t monitoring_epoch = 0;
@@ -602,6 +603,49 @@ struct BridgeServer::Impl {
         }
     }
 
+    // Caller holds mutex; automatic and explicit commands share tracking and retries.
+    std::string queue_command(const std::string& name, NodePtr arguments, std::optional<bool> monitoring_request) {
+        if (!state.connected) throw std::runtime_error("No runtime is connected to the bridge");
+        if (!capabilities.contains(name)) throw std::runtime_error("Runtime capability unavailable: " + name);
+        if (static_cast<std::size_t>(std::count_if(commands.begin(), commands.end(),
+                [](const auto& command) { return pending(command.state); })) >= pending_limit)
+            throw std::runtime_error("Too many pending bridge commands");
+        if (commands.size() >= command_limit) {
+            const auto terminal = std::find_if(commands.begin(), commands.end(),
+                [](const auto& command) { return !pending(command.state); });
+            if (terminal == commands.end()) throw std::runtime_error("The bridge command history is full");
+            commands.erase(terminal);
+        }
+        Command command;
+        gchar* id = g_uuid_string_random();
+        command.id = id;
+        g_free(id);
+        command.session_id = state.session_id;
+        command.name = name;
+        command.next_attempt = Clock::now();
+        auto node = new_object();
+        auto* object = json_node_get_object(node.get());
+        json_object_set_string_member(object, "protocol", "framerift.bridge");
+        json_object_set_int_member(object, "version", 1);
+        json_object_set_string_member(object, "type", "command");
+        json_object_set_string_member(object, "session_id", command.session_id.c_str());
+        json_object_set_int_member(object, "sequence", ++outgoing_sequence);
+        json_object_set_string_member(object, "command_id", command.id.c_str());
+        json_object_set_string_member(object, "name", command.name.c_str());
+        json_object_set_member(object, "args", arguments.release());
+        command.packet = serialize(node.get());
+        if (command.packet.size() > packet_limit) throw std::runtime_error("The command packet is too large");
+        const auto response = command_json(command);
+        if (monitoring_request) {
+            monitoring_command = command.id;
+            monitoring_requested = monitoring_request;
+            monitoring_request_epoch = monitoring_epoch;
+            monitoring_confirmed_request = false;
+        }
+        commands.push_back(std::move(command));
+        return response;
+    }
+
     void tick() {
         std::lock_guard lock(mutex);
         const auto now = Clock::now();
@@ -610,6 +654,11 @@ struct BridgeServer::Impl {
             detach(state.error);
         }
         if (!state.connected) return;
+        if (automatic_monitoring && capabilities.contains("set_monitoring")) {
+            if (!monitoring_enabled && !monitoring_requested)
+                queue_command("set_monitoring", parse_object("{\"enabled\":true}"), true);
+            automatic_monitoring = false;
+        }
         for (auto& command : commands) {
             if (command.state != "pending" || now < command.next_attempt) continue;
             if (command.attempts >= 3) {
@@ -693,7 +742,7 @@ BridgeServer::~BridgeServer() = default;
 
 std::uint16_t BridgeServer::port() const { return status().port; }
 
-void BridgeServer::expect_session(const std::string& session_id, const std::string& game_id) {
+void BridgeServer::expect_session(const std::string& session_id, const std::string& game_id, bool enable_monitoring) {
     if (session_id.empty() || game_id.empty() || session_id.size() > 128 || game_id.size() > 128)
         throw std::runtime_error("A bridge session requires valid session and game IDs");
     std::lock_guard lock(impl_->mutex);
@@ -702,6 +751,7 @@ void BridgeServer::expect_session(const std::string& session_id, const std::stri
     impl_->expected_game = game_id;
     impl_->ended_session.clear();
     impl_->reset_session(session_id, game_id);
+    impl_->automatic_monitoring = enable_monitoring;
 }
 
 void BridgeServer::end_session(const std::string& session_id) {
@@ -777,45 +827,7 @@ std::string BridgeServer::send_command(const std::string& name, const std::strin
         monitoring_request = boolean_member(values, "enabled");
     }
     std::lock_guard lock(impl_->mutex);
-    if (!impl_->state.connected) throw std::runtime_error("No runtime is connected to the bridge");
-    if (!impl_->capabilities.contains(name)) throw std::runtime_error("Runtime capability unavailable: " + name);
-    if (static_cast<std::size_t>(std::count_if(impl_->commands.begin(), impl_->commands.end(),
-            [](const auto& command) { return pending(command.state); })) >= pending_limit)
-        throw std::runtime_error("Too many pending bridge commands");
-    if (impl_->commands.size() >= command_limit) {
-        const auto terminal = std::find_if(impl_->commands.begin(), impl_->commands.end(),
-            [](const auto& command) { return !pending(command.state); });
-        if (terminal == impl_->commands.end()) throw std::runtime_error("The bridge command history is full");
-        impl_->commands.erase(terminal);
-    }
-    Impl::Command command;
-    gchar* id = g_uuid_string_random();
-    command.id = id;
-    g_free(id);
-    command.session_id = impl_->state.session_id;
-    command.name = name;
-    command.next_attempt = Clock::now();
-    auto node = new_object();
-    auto* object = json_node_get_object(node.get());
-    json_object_set_string_member(object, "protocol", "framerift.bridge");
-    json_object_set_int_member(object, "version", 1);
-    json_object_set_string_member(object, "type", "command");
-    json_object_set_string_member(object, "session_id", command.session_id.c_str());
-    json_object_set_int_member(object, "sequence", ++impl_->outgoing_sequence);
-    json_object_set_string_member(object, "command_id", command.id.c_str());
-    json_object_set_string_member(object, "name", command.name.c_str());
-    json_object_set_member(object, "args", arguments.release());
-    command.packet = serialize(node.get());
-    if (command.packet.size() > packet_limit) throw std::runtime_error("The command packet is too large");
-    const auto response = impl_->command_json(command);
-    if (monitoring_request) {
-        impl_->monitoring_command = command.id;
-        impl_->monitoring_requested = monitoring_request;
-        impl_->monitoring_request_epoch = impl_->monitoring_epoch;
-        impl_->monitoring_confirmed_request = false;
-    }
-    impl_->commands.push_back(std::move(command));
-    return response;
+    return impl_->queue_command(name, std::move(arguments), monitoring_request);
 }
 
 std::string BridgeServer::command_json(const std::string& command_id) const {

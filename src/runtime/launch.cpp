@@ -95,7 +95,7 @@ bool within_directory(const std::filesystem::path& path, const std::filesystem::
 void check_code_directory(const std::filesystem::path& code, const std::filesystem::path& cache_root,
     const std::filesystem::path& original, const std::filesystem::path& runtime, const std::filesystem::path& data_root) {
     const auto resolved = std::filesystem::weakly_canonical(code);
-    if (resolved != std::filesystem::weakly_canonical(cache_root) / "games" / code.filename() || std::filesystem::is_symlink(code)) {
+    if (resolved != std::filesystem::weakly_canonical(cache_root) / "compiled-games" / code.filename() || std::filesystem::is_symlink(code)) {
         throw std::runtime_error("The managed game code path contains an unexpected symbolic link");
     }
     for (const auto& protected_directory : {original, runtime, std::filesystem::weakly_canonical(data_root / "saves"),
@@ -286,7 +286,7 @@ void migrate_runtime_data(const std::filesystem::path& code, const std::filesyst
     for (const auto& entry : std::filesystem::directory_iterator(code)) {
         const auto name = entry.path().filename().string();
         const auto status = entry.symlink_status();
-        if (name == "app0" || name.starts_with(".convert-")) continue;
+        if (name == "app0" || name.starts_with(".convert-") || name == "game.elf.png" || name == "game.elf.desktop") continue;
         // AnyPS5 reads these relative to the executable, rather than the working directory.
         if (name == "shader_cache" || name == "anyps5-fonts" || name == "anyps5-entitlements.ini") continue;
         if (!runtime_directory(name) && (name == "game.elf" || entry.path().extension() == ".elf" ||
@@ -387,7 +387,7 @@ PreparedGame prepare_game(const Game& game, const LaunchSettings& settings,
 
     PreparedGame prepared;
     prepared.game_id = game.id;
-    prepared.code_directory = std::filesystem::absolute(cache_root / "games" / game.id).lexically_normal();
+    prepared.code_directory = std::filesystem::absolute(cache_root / "compiled-games" / game.id).lexically_normal();
     prepared.working_directory = std::filesystem::absolute(data_root / "saves" / game.id).lexically_normal();
     check_code_directory(prepared.code_directory, cache_root, original, runtime, data_root);
     check_work_directory(prepared.working_directory, data_root, original, runtime, prepared.code_directory);

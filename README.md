@@ -38,7 +38,7 @@ ctest --test-dir build --output-on-failure
 - For live telemetry, configure that AnyPS5 build with `-DANYPS5_ENABLE_DEBUG_BRIDGE=ON`.
 - Save the SteamGridDB key in Settings; `STEAMGRIDDB_API_KEY` overrides it.
 - Local development: desktop launcher points at this checkout's `build/framerift`. Packaged installation: `cmake --install build`.
-- Cache: `$XDG_CACHE_HOME/framerift` (default `~/.cache/framerift`). Saves/logs: `$XDG_DATA_HOME/framerift` (default `~/.local/share/framerift`), keyed by game ID.
+- All managed files: `$XDG_DATA_HOME/framerift` (default `~/.local/share/framerift`), with `library/`, `artwork/`, `compiled-games/`, `saves/` and `logs/`. Game directories use stable IDs. Existing `~/.cache/framerift` files and artwork references migrate automatically on startup.
 
 ## MCP and live connection
 

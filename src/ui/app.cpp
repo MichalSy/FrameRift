@@ -92,7 +92,7 @@ std::uint16_t server_port(const char* name, std::uint16_t fallback) {
 class Application {
 public:
     explicit Application(const std::string& cache_path)
-        : library_(cache_path), database_path_(cache_path), artwork_directory_(std::filesystem::path(cache_path).parent_path() / "artwork") {
+        : library_(cache_path), database_path_(cache_path), artwork_directory_(std::filesystem::path(cache_path).parent_path().parent_path() / "artwork") {
         games_ = visible_games();
         search_text_ = folded_titles(games_);
         if (!games_.empty()) selected_id_ = games_.front().id;
@@ -263,7 +263,7 @@ private:
             }
         }
         if (!game_session_) {
-            game_session_ = std::make_unique<GameSession>(library_, std::filesystem::path(database_path_).parent_path(),
+            game_session_ = std::make_unique<GameSession>(library_, std::filesystem::path(database_path_).parent_path().parent_path(),
                 std::filesystem::path(g_get_user_data_dir()) / "framerift",
                 G_APPLICATION(gtk_window_get_application(GTK_WINDOW(window_))), bridge_.get(),
                 [this](const GameSessionStatus& status) { guard([&] { session_changed(status); }); },
@@ -981,8 +981,9 @@ private:
 
 int main(int argc, char** argv) {
     try {
-        const auto cache = std::filesystem::path(g_get_user_cache_dir()) / "framerift" / "games.sqlite3";
-        framerift::Application app(cache.string());
+        const auto data = std::filesystem::path(g_get_user_data_dir()) / "framerift";
+        framerift::migrate_library_storage(std::filesystem::path(g_get_user_cache_dir()) / "framerift", data);
+        framerift::Application app((data / "library/games.sqlite3").string());
         return app.run(argc, argv);
     } catch (const std::exception& error) {
         std::cerr << "FrameRift: " << error.what() << '\n';

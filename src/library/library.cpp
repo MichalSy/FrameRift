@@ -216,6 +216,60 @@ Game read_game(const std::filesystem::path& directory) {
 
 } // namespace
 
+void migrate_library_storage(const std::filesystem::path& legacy_cache, const std::filesystem::path& data_root) {
+    const auto database_path = data_root / "library/games.sqlite3";
+    std::filesystem::create_directories(database_path.parent_path());
+    const auto move = [&](const std::filesystem::path& source, const std::filesystem::path& destination) {
+        if (!std::filesystem::exists(source)) return;
+        if (std::filesystem::exists(destination))
+            throw std::runtime_error("Storage migration conflict; both paths were preserved: " + source.string() + " and " + destination.string());
+        if (std::filesystem::is_symlink(source))
+            throw std::runtime_error("Storage migration source is a symbolic link: " + source.string());
+        std::error_code error;
+        std::filesystem::rename(source, destination, error);
+        if (!error) return;
+        if (error != std::errc::cross_device_link)
+            throw std::filesystem::filesystem_error("Could not migrate FrameRift storage", source, destination, error);
+        // Publish only a complete copy; keep the source if copying fails.
+        const auto staging = destination.string() + ".migrating";
+        if (std::filesystem::exists(staging))
+            throw std::runtime_error("Incomplete storage migration needs inspection: " + staging);
+        std::filesystem::copy(source, staging, std::filesystem::copy_options::recursive);
+        std::filesystem::rename(staging, destination);
+        std::filesystem::remove_all(source);
+    };
+    move(legacy_cache / "games", data_root / "compiled-games");
+    move(legacy_cache / "artwork", data_root / "artwork");
+    move(legacy_cache / "games.sqlite3", database_path);
+    if (std::filesystem::exists(database_path)) {
+        // Upgrade legacy schemas before rewriting absolute artwork references.
+        { Library library(database_path.string()); }
+        sqlite3* opened = nullptr;
+        if (sqlite3_open(database_path.string().c_str(), &opened) != SQLITE_OK) {
+            const std::string error = opened ? sqlite3_errmsg(opened) : "Could not open migrated library";
+            if (opened) sqlite3_close(opened);
+            throw std::runtime_error(error);
+        }
+        const std::unique_ptr<sqlite3, decltype(&sqlite3_close)> database(opened, sqlite3_close);
+        Transaction transaction(database.get());
+        const auto old_prefix = (std::filesystem::absolute(legacy_cache) / "artwork").string() + "/";
+        const auto new_prefix = (std::filesystem::absolute(data_root) / "artwork").string() + "/";
+        for (const auto* column : {"cover_path", "hero_path", "landscape_path", "logo_path"}) {
+            const auto sql = std::string("UPDATE games SET ") + column + " = ? || substr(" + column +
+                ", ?) WHERE substr(" + column + ", 1, ?) = ?";
+            Statement update(database.get(), sql.c_str());
+            update.bind(1, new_prefix);
+            update.bind(2, static_cast<std::int64_t>(old_prefix.size() + 1));
+            update.bind(3, static_cast<std::int64_t>(old_prefix.size()));
+            update.bind(4, old_prefix);
+            update.next();
+        }
+        transaction.commit();
+    }
+    if (std::filesystem::is_directory(legacy_cache) && std::filesystem::is_empty(legacy_cache))
+        std::filesystem::remove(legacy_cache);
+}
+
 Library::Library(const std::string& database_path) {
     const auto parent = std::filesystem::path(database_path).parent_path();
     if (!parent.empty()) std::filesystem::create_directories(parent);

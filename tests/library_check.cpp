@@ -304,6 +304,42 @@ int main() {
         }
         require(execute(previous_path, "PRAGMA user_version") == 3, "Version two cache was not migrated");
 
+        const auto legacy = directory / "legacy-cache";
+        const auto unified = directory / "unified-data";
+        std::filesystem::create_directories(legacy / "artwork/PPSA01288");
+        std::filesystem::create_directories(legacy / "games/PPSA01288/shader_cache");
+        std::filesystem::create_directories(unified / "saves/PPSA01288");
+        std::ofstream(legacy / "artwork/PPSA01288/cover.png") << "cover";
+        std::ofstream(legacy / "games/PPSA01288/game.elf") << "generated";
+        std::ofstream(legacy / "games/PPSA01288/shader_cache/cache.bin") << "shader";
+        std::ofstream(unified / "saves/PPSA01288/slot.bin") << "save";
+        {
+            framerift::Library library((legacy / "games.sqlite3").string());
+            std::vector<framerift::Game> records{preview(123, "Existing title", 99)};
+            records.front().cover_path = (legacy / "artwork/PPSA01288/cover.png").string();
+            library.cache_demo(records);
+            library.set_launch_settings({"/runtime"});
+        }
+        framerift::migrate_library_storage(legacy, unified);
+        framerift::migrate_library_storage(legacy, unified);
+        require(!std::filesystem::exists(legacy) &&
+            std::filesystem::exists(unified / "compiled-games/PPSA01288/game.elf") &&
+            std::filesystem::exists(unified / "compiled-games/PPSA01288/shader_cache/cache.bin") &&
+            std::filesystem::exists(unified / "saves/PPSA01288/slot.bin"), "Unified storage migration lost files or was not repeatable");
+        {
+            framerift::Library library((unified / "library/games.sqlite3").string());
+            const auto records = library.games();
+            require(records.front().cover_path == (unified / "artwork/PPSA01288/cover.png").string() &&
+                library.launch_settings().anyps5_directory == "/runtime", "Storage migration lost settings or artwork references");
+        }
+        std::filesystem::create_directories(legacy / "games");
+        std::ofstream(legacy / "games/preserved.bin") << "conflict";
+        bool conflict = false;
+        try { framerift::migrate_library_storage(legacy, unified); }
+        catch (const std::runtime_error&) { conflict = true; }
+        require(conflict && std::filesystem::exists(legacy / "games/preserved.bin") &&
+            std::filesystem::exists(unified / "compiled-games/PPSA01288/game.elf"), "Migration conflict overwrote existing data");
+
         std::filesystem::remove_all(directory);
         std::cout << "Library cache check passed\n";
         return 0;

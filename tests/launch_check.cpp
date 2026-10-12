@@ -221,7 +221,7 @@ if (root / 'fail-conversion').exists():
         game.installation_path = original.string();
         game.is_demo = false;
         const framerift::LaunchSettings settings{project.string()};
-        const auto code = cache / "games/PPSA01234";
+        const auto code = cache / "compiled-games/PPSA01234";
         const auto work = data / "saves/PPSA01234";
         const std::array legacy{std::filesystem::path("_sd/legacy.bin"), std::filesystem::path("_sd_mem/u2/slot0.bin"),
             std::filesystem::path("controller.json")};
@@ -359,11 +359,11 @@ if (root / 'fail-conversion').exists():
         std::filesystem::remove(work / "_sd/original-link");
         rejected([&] { framerift::prepare_game(game, settings, original, data, true); });
         rejected([&] { framerift::prepare_game(game, settings, runtime, data, true); });
-        require(!std::filesystem::exists(original / "games") && !std::filesystem::exists(runtime / "games"),
+        require(!std::filesystem::exists(original / "compiled-games") && !std::filesystem::exists(runtime / "compiled-games"),
             "A code cache was created inside the original game or shared runtime");
         const auto linked_cache = directory / "Linked Cache";
         std::filesystem::create_directory(linked_cache);
-        std::filesystem::create_directory_symlink(original, linked_cache / "games");
+        std::filesystem::create_directory_symlink(original, linked_cache / "compiled-games");
         rejected([&] { framerift::prepare_game(game, settings, linked_cache, data, true); });
         require(!std::filesystem::exists(original / game.id), "An ancestor cache link wrote into the original game");
         const auto linked_data = directory / "Linked Data";
@@ -475,7 +475,7 @@ if (root / 'fail-conversion').exists():
             try {
                 auto cross_device_game = game;
                 cross_device_game.id = "PPSA54321";
-                const auto old_code = cache / "games" / cross_device_game.id;
+                const auto old_code = cache / "compiled-games" / cross_device_game.id;
                 write(old_code / "game.elf", elf(2), true);
                 write(old_code / "_sd/save.bin", "Cross-device save");
                 const auto migrated = framerift::prepare_game(cross_device_game, settings, cache, other_data);

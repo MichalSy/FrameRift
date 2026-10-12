@@ -6,6 +6,7 @@
 #pragma once
 
 #include <cstdint>
+#include <filesystem>
 #include <string>
 #include <vector>
 
@@ -37,6 +38,8 @@ struct ScanResult {
 struct LaunchSettings {
     std::string anyps5_directory;
 };
+
+void migrate_library_storage(const std::filesystem::path& legacy_cache, const std::filesystem::path& data_root);
 
 ScanResult scan_game_folders(const std::vector<std::string>& folders);
 

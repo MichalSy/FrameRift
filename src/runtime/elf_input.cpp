@@ -25,8 +25,8 @@ std::vector<std::uint8_t> DecodeSelf(const std::vector<std::uint8_t>& source, co
         if (offset > limit || size > limit - offset) fail("SELF range exceeds file bounds");
     };
     range(0, 32, source.size());
-    const bool supportedVersion = source[4] == 0 || (ReadU32(source, 0) == 0xeef51454 && source[4] == 0x10);
-    if (!supportedVersion || source[5] != 1 || source[6] != 1) fail("Unsupported SELF header version, mode or endianness");
+    // Version and signing mode do not determine whether the program data is readable.
+    if (source[6] != 1) fail("SELF header is not little-endian");
     const auto entryCount = ReadU16(source, 24);
     const std::uint64_t elfOffset = 32 + static_cast<std::uint64_t>(entryCount) * 32;
     const auto headerSize = ReadU16(source, 12);
@@ -48,30 +48,38 @@ std::vector<std::uint8_t> DecodeSelf(const std::vector<std::uint8_t>& source, co
         std::uint64_t sourceOffset = 0;
     };
     std::vector<Segment> segments;
-    constexpr std::uint64_t maxImageSize = 2ull * 1024 * 1024 * 1024;
     for (std::uint16_t index = 0; index < phCount; ++index) {
         const auto position = elfOffset + phOffset + static_cast<std::uint64_t>(index) * 56;
         Segment segment{ReadU32(source, position), ReadU64(source, position + 16), ReadU64(source, position + 8), ReadU64(source, position + 32)};
-        if (segment.offset > maxImageSize || segment.size > maxImageSize - segment.offset) fail("SELF program image exceeds the supported 2 GiB size limit");
         segments.push_back(segment);
     }
     for (std::uint16_t index = 0; index < entryCount; ++index) {
         const auto position = 32 + static_cast<std::uint64_t>(index) * 32;
         const auto properties = ReadU64(source, position);
+        // Digest/signature entries are not copied into the reconstructed ELF.
+        if ((properties & (1ull << 11)) == 0) continue;
         if ((properties & 2) != 0) fail("Encrypted SELF segments are unsupported; provide plaintext input");
         if ((properties & 8) != 0) fail("Compressed SELF segments are unsupported; provide plaintext input");
         const auto offset = ReadU64(source, position + 8);
         const auto size = ReadU64(source, position + 16);
         range(offset, size, source.size());
         if (offset < payloadStart || size != ReadU64(source, position + 24)) fail("Invalid plaintext SELF segment size or offset");
-        if ((properties & (1ull << 11)) == 0) continue;
         const auto segmentIndex = (properties >> 20) & 0xffff;
         if (segmentIndex >= segments.size()) fail("Invalid SELF program segment index");
         auto& segment = segments[segmentIndex];
-        if (segment.sourceOffset != 0) fail("Duplicate SELF program segment");
-        if (size != segment.size || segment.offset < elfHeaderSize) fail("Invalid SELF program segment size or offset");
+        if (size < segment.size) fail("SELF entry is missing program segment bytes");
+        range(segment.offset, segment.size, std::vector<std::uint8_t>().max_size());
+        const auto matches = [&](std::uint64_t start, std::uint64_t end, std::uint64_t otherSource) {
+            return std::equal(source.begin() + offset + (start - segment.offset),
+                source.begin() + offset + (end - segment.offset), source.begin() + otherSource);
+        };
+        const auto headerEnd = std::min(segment.offset + segment.size, elfHeaderSize);
+        if (segment.offset < headerEnd && !matches(segment.offset, headerEnd, elfOffset + segment.offset)) fail("SELF segment conflicts with its embedded ELF header");
         for (const auto& other : segments) {
-            if (other.sourceOffset != 0 && segment.offset < other.offset + other.size && other.offset < segment.offset + segment.size) fail("Overlapping SELF program segments");
+            if (other.sourceOffset == 0) continue;
+            const auto start = std::max(segment.offset, other.offset);
+            const auto end = std::min(segment.offset + segment.size, other.offset + other.size);
+            if (start < end && !matches(start, end, other.sourceOffset + start - other.offset)) fail("Conflicting SELF program segment data");
         }
         segment.sourceOffset = offset;
     }
@@ -119,7 +127,8 @@ std::vector<std::uint8_t> DecodeSelf(const std::vector<std::uint8_t>& source, co
 void prepare_elf_input(const std::filesystem::path& source, const std::filesystem::path& destination) {
     std::ifstream file(source, std::ios::binary | std::ios::ate);
     const auto size = file.tellg();
-    if (!file || size < 0 || size > 2ll * 1024 * 1024 * 1024) throw std::runtime_error("Cannot read conversion input: " + source.string());
+    if (!file || size < 0) throw std::runtime_error("Cannot read conversion input: " + source.string());
+    if (static_cast<std::uint64_t>(size) > std::vector<std::uint8_t>().max_size()) throw std::runtime_error("Conversion input exceeds host buffer capacity: " + source.string());
     file.seekg(0);
     std::vector<std::uint8_t> bytes(static_cast<std::size_t>(size));
     if (!file.read(reinterpret_cast<char*>(bytes.data()), size)) throw std::runtime_error("Cannot read conversion input: " + source.string());

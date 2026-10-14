@@ -19,7 +19,7 @@ Additional attribution terms: see NOTICE in the repository root.
 
 - Scanner reads `sce_sys/param.json` titles/title IDs and original installation paths. Add game folders in Settings; do not seed installations manually.
 - Play reuses `game.elf`; missing code triggers relinking of original `eboot.bin` with `--to-intel` and upstream `--module-dir` arguments for additional PRX directories.
-- Plaintext SELF inputs, including PS5 header version 0x10, are unpacked into temporary ELF files for upstream relinking. Encrypted or compressed containers are rejected. Temporary inputs are removed after conversion; original files are never rewritten.
+- Plaintext SELF inputs are unpacked into temporary ELF files for upstream relinking without a version/signing-mode allowlist or a fixed 2 GiB limit. Only required program data is checked for encryption, compression, bounds and conflicting bytes; unused signature entries are ignored. Temporary inputs are removed after conversion; original files are never rewritten.
 - FrameRift uses `tools/run_game.py` with separate original-game, generated executable, working-directory and shared-runtime paths.
 - `tools/run_with_memory_guard.py`, Python 3, Linux cgroup v2 and a systemd user manager are required. Unguarded launch is disabled.
 - Rebuild recreates generated code only; it does not launch the game. Original files, saves, shader caches and shared libraries remain intact.

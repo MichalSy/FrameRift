@@ -56,10 +56,9 @@ int main() {
         require(rejected && read(source) == self && read(output) == elf);
     }
     self = ps5_self;
-    self[4] = 0x11; write(source, self);
-    bool rejected_version = false;
-    try { framerift::prepare_elf_input(source, output); } catch (const std::runtime_error&) { rejected_version = true; }
-    require(rejected_version && read(output) == elf);
+    self[4] = 0x11; self[5] = 2; write(source, self);
+    framerift::prepare_elf_input(source, output);
+    require(read(output) == elf && read(source) == self);
     self = ps5_self;
     word(0, 0x1d3d154f, 4); self[4] = 0;
     word(8, 0, 4); word(26, 0, 2);
@@ -68,12 +67,50 @@ int main() {
     require(read(output) == elf && read(source) == self);
     const auto original_self = self;
     word(12, 256, 2); word(14, 0, 2); word(120, 2, 2);
-    word(184, 4, 4); word(192, 1024, 8); word(216, 8, 8);
+    word(184, 4, 4); word(192, 0x80000000ull, 8); word(216, 8, 8);
     write(source, self);
     framerift::prepare_elf_input(source, output);
     const auto without_note = read(output);
     require(std::all_of(without_note.begin() + 120, without_note.begin() + 176, [](auto byte) { return byte == 0; }));
     require(std::equal(without_note.begin() + 256, without_note.end(), self.begin() + 256) && read(source) == self);
+    // An unused signature entry must not reject otherwise readable program data.
+    const auto note_self = self;
+    self.insert(self.begin() + 64, 32, 0);
+    word(24, 2, 2); word(12, 288, 2); word(40, 288, 8);
+    word(64, 2u | 8u, 8); word(72, 0xffffffffffffffffull, 8);
+    write(source, self);
+    framerift::prepare_elf_input(source, output);
+    require(read(output) == without_note && read(source) == self);
+    self = note_self;
+    // Invalid data ranges and missing program data still fail before writing output.
+    for (const auto invalid : {0, 1, 2}) {
+        self = note_self;
+        if (invalid == 0) word(40, self.size(), 8);
+        if (invalid == 1) word(32, 0, 8);
+        if (invalid == 2) self[6] = 2;
+        write(source, self);
+        bool rejected = false;
+        try { framerift::prepare_elf_input(source, output); } catch (const std::runtime_error&) { rejected = true; }
+        require(rejected && read(output) == without_note && read(source) == self);
+    }
+    self = original_self;
+    // Container padding is not part of the ELF program segment.
+    self.insert(self.end(), {0xaa, 0xbb});
+    word(48, 6, 8); word(56, 6, 8); write(source, self);
+    framerift::prepare_elf_input(source, output);
+    require(read(output) == elf && read(source) == self);
+    // Duplicate mappings are harmless when they contain the same program bytes.
+    self = original_self;
+    self.insert(self.begin() + 64, 32, 0);
+    word(24, 2, 2); word(12, 224, 2); word(40, 288, 8);
+    word(64, 1u << 11u, 8); word(72, 292, 8); word(80, 4, 8); word(88, 4, 8);
+    self.insert(self.end(), {1, 2, 3, 4}); write(source, self);
+    framerift::prepare_elf_input(source, output);
+    require(read(output) == elf && read(source) == self);
+    self.back() = 5; write(source, self);
+    bool rejected_conflict = false;
+    try { framerift::prepare_elf_input(source, output); } catch (const std::runtime_error&) { rejected_conflict = true; }
+    require(rejected_conflict && read(output) == elf && read(source) == self);
     self = original_self;
     write(source, elf);
     framerift::prepare_elf_input(source, output);

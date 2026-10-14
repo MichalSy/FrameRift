@@ -42,6 +42,27 @@ int main() {
     const auto elf = read(output);
     require(elf.size() == 260 && std::equal(elf.begin(), elf.begin() + 120, self.begin() + 64));
     require(std::equal(elf.begin() + 256, elf.end(), self.begin() + 256) && read(source) == self);
+    // Reproduce the PS5 SELF header used by GT7 and Wobbly Life's PS5Util.
+    word(0, 0xeef51454, 4); self[4] = 0x10;
+    word(8, 0x10000101, 4); word(26, 0x32, 2);
+    write(source, self);
+    framerift::prepare_elf_input(source, output);
+    require(read(output) == elf && read(source) == self);
+    const auto ps5_self = self;
+    for (const auto flag : {2u, 8u}) {
+        word(32, (1u << 11u) | flag, 8); write(source, self);
+        bool rejected = false;
+        try { framerift::prepare_elf_input(source, output); } catch (const std::runtime_error&) { rejected = true; }
+        require(rejected && read(source) == self && read(output) == elf);
+    }
+    self = ps5_self;
+    self[4] = 0x11; write(source, self);
+    bool rejected_version = false;
+    try { framerift::prepare_elf_input(source, output); } catch (const std::runtime_error&) { rejected_version = true; }
+    require(rejected_version && read(output) == elf);
+    self = ps5_self;
+    word(0, 0x1d3d154f, 4); self[4] = 0;
+    word(8, 0, 4); word(26, 0, 2);
     word(104, 4096, 8); word(122, 64, 2); word(124, 1, 2); write(source, self);
     framerift::prepare_elf_input(source, output);
     require(read(output) == elf && read(source) == self);

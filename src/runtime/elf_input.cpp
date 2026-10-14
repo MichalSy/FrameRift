@@ -25,7 +25,8 @@ std::vector<std::uint8_t> DecodeSelf(const std::vector<std::uint8_t>& source, co
         if (offset > limit || size > limit - offset) fail("SELF range exceeds file bounds");
     };
     range(0, 32, source.size());
-    if (source[4] != 0 || source[5] != 1 || source[6] != 1) fail("Unsupported SELF header; expected a plaintext little-endian container");
+    const bool supportedVersion = source[4] == 0 || (ReadU32(source, 0) == 0xeef51454 && source[4] == 0x10);
+    if (!supportedVersion || source[5] != 1 || source[6] != 1) fail("Unsupported SELF header version, mode or endianness");
     const auto entryCount = ReadU16(source, 24);
     const std::uint64_t elfOffset = 32 + static_cast<std::uint64_t>(entryCount) * 32;
     const auto headerSize = ReadU16(source, 12);

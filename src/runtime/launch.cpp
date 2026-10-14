@@ -438,7 +438,8 @@ PreparedGame prepare_game(const Game& game, const LaunchSettings& settings,
         for (auto iterator = std::filesystem::recursive_directory_iterator(original); iterator != std::filesystem::recursive_directory_iterator(); ++iterator) {
             check_cancelled(cancellable);
             const auto& entry = *iterator;
-            if (entry.is_directory() && (entry.path() == original / "fakelib" || entry.path() == original / "sce_sys")) {
+            if (entry.is_directory() && (entry.path() == original / "fakelib" || entry.path() == original / "sce_sys" ||
+                    std::filesystem::is_regular_file(entry.path() / "eboot.bin"))) {
                 iterator.disable_recursion_pending();
                 continue;
             }

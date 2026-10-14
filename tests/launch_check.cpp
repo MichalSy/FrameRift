@@ -126,6 +126,8 @@ int main() {
         write(original / "eboot.bin", "Original SELF data");
         write(original / "media/Plugins/example.prx", "Original module data");
         write(original / "fakelib/libSceExample.sprx", "SDK stub, not a guest module");
+        write(original / "decrypted/eboot.bin", "Nested installation");
+        write(original / "decrypted/media/Plugins/example.prx", "Nested module copy");
         write(original / "media/asset.bin", "Original resource");
         write_selector(project);
         const auto guard = project / "tools/run_with_memory_guard.py";
@@ -201,6 +203,8 @@ assert sys.argv[1:-2] == ['--to-intel', '--module-dir', 'media/Plugins']
 source, output = map(pathlib.Path, sys.argv[-2:])
 assert source.read_text() == 'Original SELF data'
 assert output.parent == pathlib.Path.cwd() and source.parent == output.parent / '.inputs'
+assert source.with_name('media').joinpath('Plugins/example.prx').read_text() == 'Original module data'
+assert not source.with_name('decrypted').exists()
 header = bytearray(64)
 header[:7] = b'\x7fELF\x02\x01\x01'
 header[8] = conversion
@@ -373,7 +377,8 @@ if (root / 'fail-conversion').exists():
         std::filesystem::create_directory_symlink(original, linked_data / "logs" / game.id);
         rejected([&] { framerift::prepare_game(game, settings, cache, linked_data, true); });
         for (const auto& entry : std::filesystem::directory_iterator(original)) {
-            require(entry.path().filename() == "eboot.bin" || entry.path().filename() == "media" || entry.path().filename() == "fakelib",
+            require(entry.path().filename() == "eboot.bin" || entry.path().filename() == "media" ||
+                entry.path().filename() == "fakelib" || entry.path().filename() == "decrypted",
                 "A session log link wrote into the original game");
         }
         require(read(code / "game.elf") == rebuilt_executable, "An unsafe log path changed the existing generated code");
@@ -393,6 +398,9 @@ if (root / 'fail-conversion').exists():
         std::filesystem::remove(code / "app0/original-link");
         require(read(original / "eboot.bin") == "Original SELF data" && read(original / "media/asset.bin") == "Original resource",
             "Original game files were changed");
+        require(read(original / "decrypted/eboot.bin") == "Nested installation" &&
+            read(original / "decrypted/media/Plugins/example.prx") == "Nested module copy",
+            "Nested installation files were changed");
         for (const auto& entry : std::filesystem::recursive_directory_iterator(code)) {
             require(!entry.is_symlink() && !entry.path().filename().string().starts_with(".convert-"),
                 "A conversion staging directory or symbolic link was left in the cache");

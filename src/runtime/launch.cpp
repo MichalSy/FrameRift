@@ -5,11 +5,13 @@
 
 #include "launch.hpp"
 #include "log.hpp"
+#include "elf_input.hpp"
 
 #include <algorithm>
 #include <array>
 #include <fstream>
 #include <memory>
+#include <set>
 #include <stdexcept>
 #ifdef G_OS_UNIX
 #include <signal.h>
@@ -427,8 +429,33 @@ PreparedGame prepare_game(const Game& game, const LaunchSettings& settings,
         check_cancelled(cancellable);
         if (rebuild) remove_generated_code(prepared.code_directory);
         const auto generated = staging.path / "game.elf";
-        auto converter = spawn_process({relinker.string(), "--to-intel", "--recursive-module-search",
-            (original / "eboot.bin").string(), generated.string()}, staging.path, prepared.conversion_log_path);
+        const auto inputs = staging.path / ".inputs";
+        const auto default_modules = std::filesystem::exists(original / "sce_modules") && !std::filesystem::exists(original / "sce_module")
+            ? "sce_modules" : "sce_module";
+        std::filesystem::create_directories(inputs / default_modules);
+        prepare_elf_input(original / "eboot.bin", inputs / "eboot.bin");
+        std::set<std::filesystem::path> module_directories;
+        for (auto iterator = std::filesystem::recursive_directory_iterator(original); iterator != std::filesystem::recursive_directory_iterator(); ++iterator) {
+            check_cancelled(cancellable);
+            const auto& entry = *iterator;
+            if (entry.is_directory() && (entry.path() == original / "fakelib" || entry.path() == original / "sce_sys")) {
+                iterator.disable_recursion_pending();
+                continue;
+            }
+            if (!entry.is_regular_file() || (entry.path().extension() != ".prx" && entry.path().extension() != ".sprx")) continue;
+            prepare_elf_input(entry.path(), inputs / entry.path().lexically_relative(original));
+            const auto relative = entry.path().parent_path().lexically_relative(original);
+            if (relative == "sce_module" || relative == "sce_modules" || relative == "prx") continue;
+            module_directories.insert(relative);
+        }
+        std::vector<std::string> conversion{relinker.string(), "--to-intel"};
+        for (const auto& directory : module_directories) {
+            conversion.push_back("--module-dir");
+            conversion.push_back(directory.generic_string());
+        }
+        conversion.push_back((inputs / "eboot.bin").string());
+        conversion.push_back(generated.string());
+        auto converter = spawn_process(conversion, staging.path, prepared.conversion_log_path);
         GError* conversion_error = nullptr;
         if (!g_subprocess_wait_check(converter.get(), cancellable, &conversion_error)) {
             const std::string message = conversion_error ? conversion_error->message : "Conversion failed";
@@ -437,6 +464,7 @@ PreparedGame prepare_game(const Game& game, const LaunchSettings& settings,
             if (cancelled) stop_converter(converter.get());
             throw ConversionError(message + ". Conversion log: " + prepared.conversion_log_path.string(), prepared.conversion_log_path);
         }
+        std::filesystem::remove_all(inputs);
         check_cancelled(cancellable);
         if (std::filesystem::is_symlink(generated)) throw std::runtime_error("Conversion produced an unexpected executable link");
         std::filesystem::permissions(generated, std::filesystem::perms::owner_exec, std::filesystem::perm_options::add);

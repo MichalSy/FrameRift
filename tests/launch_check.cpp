@@ -124,6 +124,8 @@ int main() {
         const auto cache = directory / "Cache Root";
         const auto data = directory / "Data Root";
         write(original / "eboot.bin", "Original SELF data");
+        write(original / "media/Plugins/example.prx", "Original module data");
+        write(original / "fakelib/libSceExample.sprx", "SDK stub, not a guest module");
         write(original / "media/asset.bin", "Original resource");
         write_selector(project);
         const auto guard = project / "tools/run_with_memory_guard.py";
@@ -195,10 +197,10 @@ root = pathlib.Path(__file__).parents[3]
 with (root / 'conversion-count').open('a') as count:
     count.write('converted\n')
 conversion = (root / 'conversion-count').read_text().count('converted\n')
-assert len(sys.argv) == 5 and sys.argv[1:3] == ['--to-intel', '--recursive-module-search']
-source, output = map(pathlib.Path, sys.argv[3:])
+assert sys.argv[1:-2] == ['--to-intel', '--module-dir', 'media/Plugins']
+source, output = map(pathlib.Path, sys.argv[-2:])
 assert source.read_text() == 'Original SELF data'
-assert output.parent == pathlib.Path.cwd()
+assert output.parent == pathlib.Path.cwd() and source.parent == output.parent / '.inputs'
 header = bytearray(64)
 header[:7] = b'\x7fELF\x02\x01\x01'
 header[8] = conversion
@@ -371,7 +373,7 @@ if (root / 'fail-conversion').exists():
         std::filesystem::create_directory_symlink(original, linked_data / "logs" / game.id);
         rejected([&] { framerift::prepare_game(game, settings, cache, linked_data, true); });
         for (const auto& entry : std::filesystem::directory_iterator(original)) {
-            require(entry.path().filename() == "eboot.bin" || entry.path().filename() == "media",
+            require(entry.path().filename() == "eboot.bin" || entry.path().filename() == "media" || entry.path().filename() == "fakelib",
                 "A session log link wrote into the original game");
         }
         require(read(code / "game.elf") == rebuilt_executable, "An unsafe log path changed the existing generated code");
